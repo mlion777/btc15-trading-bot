@@ -1,3 +1,4 @@
+from opportunity_watch import watch
 """BTC15 Signal Lab v2. Research dashboard; no real-money execution."""
 import io, json, time
 from pathlib import Path
@@ -24,7 +25,7 @@ st.caption('POLYMARKET BTC 15-MIN UP/DOWN  •  LIVE MARKET RESEARCH  •  PAPER
 with st.sidebar:
     st.header('Terminal settings')
     refresh=st.slider('Refresh every (seconds)',1,60,2)
-    auto_refresh=st.toggle('Auto-refresh live dashboard',value=True)
+    auto_refresh=st.toggle('Auto-refresh full page (can interrupt streaming chart)',value=False)
     if auto_refresh:st_autorefresh(interval=refresh*1000,key='btc15_auto_refresh')
     stake=st.number_input('Paper order size ($)',1.,10000.,10.,1.)
     fee_pct=st.slider('Paper fee assumption (%)',0.,10.,1.,.1)/100
@@ -103,6 +104,13 @@ if scalp.get('side') and not (confirmation and confirmation['ok']):
     scalp={**scalp,'side':None,'reason':'Closed-candle confirmations incomplete','status':'NO ENTRY'}
 if scalp.get('side') and (tick_age is None or tick_age>15):
     scalp={**scalp,'side':None,'reason':'No fresh observed Coinbase trade','status':'NO ENTRY'}
+opportunity=watch(z,long_confirmation,short_confirmation,long_reversal,short_reversal)
+st.subheader('Scalp opportunity watch — experimental')
+if opportunity['side']:
+    st.info(f"**{opportunity['side']} WATCH — {opportunity['stage']}** · Technical votes {opportunity['votes']} · Not a confirmed or validated Polymarket entry.")
+else:
+    st.write(f"WATCH: {opportunity['stage']} · {opportunity['reason']}")
+st.caption('A watch can appear without a trade. PAPER ENTRY still requires fresh quotes, depth, spread, and candle confirmation. Do not interpret technical votes as a probability.')
 st.subheader('Live setup tracker')
 with st.expander('Independent reversal detector — supply rejection / demand bounce', expanded=True):
     left,right=st.columns(2)
@@ -142,7 +150,10 @@ live,depth,history,paper,testing,health=st.tabs(['📈 Live terminal','📚 Orde
 with live:
     st.subheader('Streaming BTC candlesticks and price zones')
     if btc is not None and len(btc)>40:
+        st.caption('If the streaming chart is blank, use the backup candlestick chart below.')
         show_streaming_chart(btc,market.get('reference') if market else None)
+    else:
+        st.warning('Chart data unavailable: historical candles did not load.')
         st.caption('This chart uses an independent Coinbase WebSocket inside your browser. The candle updates on incoming trades without rerunning Streamlit. It may temporarily disconnect; it is not the Chainlink settlement feed.')
     st.subheader('Spot flow and Polymarket depth diagnostics')
     if ticks:
@@ -188,7 +199,7 @@ with live:
         if market and market['reference']:
             fig.add_hline(y=market['reference'],line_dash='dash',line_color='#eab308',annotation_text='Source-reported price to beat')
         fig.update_layout(height=540,margin=dict(l=8,r=8,t=12,b=8),xaxis_rangeslider_visible=False,template='plotly_dark',legend_orientation='h',uirevision='btc15',xaxis=dict(type='date',range=[chart.ts.iloc[-1]-pd.Timedelta(minutes=80),now+pd.Timedelta(minutes=2)]))
-        with st.expander('Show legacy snapshot chart (updates on page refresh)'):
+        with st.expander('Backup candlestick chart (works without WebSocket)', expanded=True):
             st.plotly_chart(fig,use_container_width=True,config={'scrollZoom':True,'displaylogo':False})
         if market and spot and market['reference']:
             distance=spot-market['reference']
