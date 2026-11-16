@@ -20,12 +20,22 @@ from streamlit_autorefresh import st_autorefresh
 from advanced import (market_bundle,detailed_book,spot_quality,zones,history_binance,research_backtest,
     reliability_table,evaluate_market_predictions,init_research_db,record_snapshot,record_trade,settle_trade,market_history)
 
-st.set_page_config(page_title='BTC15 Intelligence Terminal',page_icon='₿',layout='wide',initial_sidebar_state='expanded')
-st.markdown('''<style>.block-container{padding-top:1.2rem;max-width:1550px}div[data-testid="stMetric"]{background:#131e2b;border:1px solid #29384b;border-radius:12px;padding:12px} .stApp{background:#0b111b;color:#e8eef7}h1,h2,h3{letter-spacing:-.025em}</style>''',unsafe_allow_html=True)
-st.title('₿ BTC15 Intelligence Terminal')
-st.caption('POLYMARKET BTC 15-MIN UP/DOWN  •  LIVE MARKET RESEARCH  •  PAPER TRADING ONLY  •  NO EXECUTION KEYS')
+st.set_page_config(page_title='BTC15 | Trading Terminal',page_icon='₿',layout='wide',initial_sidebar_state='collapsed')
+st.markdown("""<style>
+.stApp {background:#080d15;color:#eaf1fb}
+.block-container {max-width:1750px;padding-top:1rem;padding-bottom:3rem}
+h1,h2,h3 {letter-spacing:-.035em}
+h1 {font-size:2rem!important}
+[data-testid="stMetric"] {background:#101b2b;border:1px solid #27384c;border-radius:10px;padding:12px 14px}
+[data-testid="stMetricLabel"] {color:#90a5bc}
+[data-testid="stTabs"] {margin-top:1rem}
+[data-testid="stSidebar"] {background:#0e1725}
+.stAlert {border-radius:10px}
+</style>""",unsafe_allow_html=True)
+st.title('₿ BTC15  /  PAPER TRADING TERMINAL')
+st.caption('BTC 15-MIN UP/DOWN  •  PRICE ACTION + MARKET DEPTH  •  SIMULATED TRADES ONLY')
 with st.sidebar:
-    st.header('Terminal settings')
+    st.header('Strategy & risk settings')
     refresh=st.slider('Refresh every (seconds)',3,60,5)
     auto_refresh=st.toggle('Auto-refresh dashboard every 5s',value=True)
     if auto_refresh:st_autorefresh(interval=refresh*1000,key='btc15_auto_refresh')
@@ -117,14 +127,23 @@ else:
     st.warning(f"**WAIT — {price_action['stage']}** · Price-action votes {price_action['votes']}")
 if price_action["reasons"]:st.caption("Why: "+"; ".join(price_action["reasons"]))
 if "contract_move_pct" in price_action:st.caption(f"BTC versus contract price-to-beat: {price_action['contract_move_pct']:+.3f}% (source reference, not independently verified)")
-st.subheader('Scalp opportunity watch — experimental')
+st.markdown('#### Scalp opportunity')
 if opportunity['side']:
     st.info(f"**{opportunity['side']} WATCH — {opportunity['stage']}** · Technical votes {opportunity['votes']} · Not a confirmed or validated Polymarket entry.")
 else:
     st.write(f"WATCH: {opportunity['stage']} · {opportunity['reason']}")
 st.caption('A watch can appear without a trade. Technical votes are NOT win probabilities.')
-paper_result=paper_tick(market,opportunity,quality,up,down,tick_age,stake,fee_pct,max_spread,auto_paper_enabled,min_paper_votes)
-st.subheader('Automatic paper-trading desk')
+closed_paper=[x for x in paper_result.get('positions',[]) if x.get('state')=='CLOSED' and x.get('pnl') is not None]
+open_paper=[x for x in paper_result.get('positions',[]) if x.get('state')=='OPEN']
+paper_net=sum(float(x['pnl']) for x in closed_paper)
+win_count=sum(float(x['pnl'])>0 for x in closed_paper)
+stat1,stat2,stat3,stat4=st.columns(4)
+stat1.metric('Paper net P&L (recent)',f'${paper_net:+,.2f}')
+stat2.metric('Closed paper trades',str(len(closed_paper)))
+stat3.metric('Win rate (recent)',f'{win_count/len(closed_paper):.0%}' if closed_paper else '—')
+stat4.metric('Open positions',str(len(open_paper)))
+st.caption('Recent results come from the local simulated trade database and are not a forecast. Database may reset on hosting restart.')
+st.markdown('#### Automated paper desk')
 if paper_result['events']:
     for event in paper_result['events']:st.success(event)
 if paper_result['positions']:
@@ -135,8 +154,8 @@ if paper_result['positions']:
 if paper_result['blocked']:st.info('Why no new automatic paper trade: '+'; '.join(paper_result['blocked']))
 with st.expander('Automatic paper trade history',expanded=False):
     st.dataframe(pd.DataFrame(paper_result['positions']),use_container_width=True,hide_index=True)
-st.caption('Automatic entries and exits use observed order-book snapshots and assumed fees; fills and profitability are not guaranteed. Open positions may remain unresolved if quotes vanish or the app sleeps.')
-st.subheader('Live setup tracker')
+st.caption('Paper fills use sampled order-book quotes; actual fills, fees, and profits may differ. The strategy is unvalidated. Open positions may remain unresolved if the app sleeps.')
+st.markdown('#### Advanced technical diagnostics')
 with st.expander('Independent reversal detector — supply rejection / demand bounce', expanded=True):
     left,right=st.columns(2)
     for column,side,result in [(left,'LONG',long_reversal),(right,'SHORT',short_reversal)]:
@@ -200,38 +219,6 @@ with live:
             st.write(f'**{label} contract top-five-level depth:** bids ${p["bid_usd"]:,.0f} / asks ${p["ask_usd"]:,.0f} · bid share {p["bid_share"]:.0%} · imbalance {p["imbalance"]:+.1%}')
             st.progress(max(0.,min(1.,p['bid_share'])))
     st.caption('Order-book pressure is resting liquidity, not actual market buy/sell flow. UP and DOWN are separate contracts. Quotes may change or be cancelled.')
-    if btc is not None and len(btc)>40:
-        chart=btc.tail(240).copy()
-        live_candles=provisional_candles(ticks)
-        if not live_candles.empty:
-            # Only overlay the current incomplete minute; avoid replacing authoritative historical bars.
-            live_candles=live_candles[live_candles.ts>=now.floor('min')]
-            chart=pd.concat([chart,live_candles],ignore_index=True).sort_values('ts').drop_duplicates('ts',keep='last')
-        fig=go.Figure()
-        fig.add_trace(go.Candlestick(x=chart.ts,open=chart.open,high=chart.high,low=chart.low,close=chart.close,name='BTC 1m candles + provisional trade-built candle'))
-        for key,color in [('ema9','#5bc0eb'),('ema21','#f6c453'),('ema55','#bd8cff')]:
-            s=btc.close.ewm(span=int(key[3:]),adjust=False).mean().tail(min(len(btc),240))
-            fig.add_trace(go.Scatter(x=btc.ts.tail(len(s)),y=s,name=key.upper(),line=dict(color=color,width=1.3)))
-        zone_data=supply_demand_zones(btc)
-        for kind,color in [('demand','rgba(22,163,74,0.18)'),('supply','rgba(239,68,68,0.18)')]:
-            for band in zone_data[kind]:
-                fig.add_hrect(y0=band['low'],y1=band['high'],fillcolor=color,line_width=0,
-                              annotation_text=kind.upper(),annotation_position='top left')
-        if scalp.get('side') and ticks and (now-ticks[-1]['ts']).total_seconds()<=15:
-            fig.add_annotation(x=chart.ts.iloc[-1],y=spot,text='PAPER '+scalp['side']+' candidate',
-                               showarrow=True,arrowhead=2,ay=-55 if scalp['side']=='UP' else 55,
-                               bgcolor='#164e3a' if scalp['side']=='UP' else '#7f1d1d',font=dict(color='white'))
-        if market and market['reference']:
-            fig.add_hline(y=market['reference'],line_dash='dash',line_color='#eab308',annotation_text='Source-reported price to beat')
-        fig.update_layout(height=540,margin=dict(l=8,r=8,t=12,b=8),xaxis_rangeslider_visible=False,template='plotly_dark',legend_orientation='h',uirevision='btc15',xaxis=dict(type='date',range=[chart.ts.iloc[-1]-pd.Timedelta(minutes=80),now+pd.Timedelta(minutes=2)]))
-        st.plotly_chart(fig,use_container_width=True,config={'scrollZoom':True,'displaylogo':False})
-        if market and spot and market['reference']:
-            distance=spot-market['reference']
-            st.metric('Spot minus source-reported strike (NOT oracle)',f'${distance:+,.2f}',f'{100*distance/market["reference"]:+.3f}%')
-            st.caption(f'Reference grade: {market["reference_grade"]} · {market["reference_source"]}. Source-reported does NOT mean independently Chainlink-verified.')
-            proxy=proxy_probability(btc,market['seconds_left'],spot,market['reference'])
-            if proxy is not None:
-                st.write(f'Illustrative volatility-only UP estimate: **{proxy:.1%}** / DOWN estimate: **{1-proxy:.1%}**. **NOT CALIBRATED — DO NOT TREAT AS A TRADE SIGNAL.**')
     st.subheader('Directional context')
     if z:
         a,b,c,d=st.columns(4)
