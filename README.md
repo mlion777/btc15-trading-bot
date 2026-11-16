@@ -132,3 +132,6 @@ The Live terminal now embeds a Lightweight Charts v4 candlestick chart. It subsc
 
 ## V9 visual overlay
 The streaming Coinbase chart now paints translucent historical swing-pivot supply/demand rectangles and unfilled three-candle fair-value gaps, and attaches historical paper LONG/SHORT confirmation arrows to their closed candles. The final candle is treated as provisional and excluded from signal generation. These overlays are price-action heuristics, **not** Bucko's undisclosed proprietary indicator, validated trade opportunities, or live real-money entry instructions. Existing Streamlit-side NO ENTRY filters still apply; arrows are historical technical confirmations, not trade executions. Chart data and Polymarket settlement references may differ. The browser WebSocket can disconnect or miss trades. This version does not execute orders.
+
+## V11 reversal detection
+Independent causal reversal detector (`reversals.py`) with supply/demand touch, decisive closed candle, short-term structure break, and directional turn diagnostics. Chart marks `REV LONG` / `REV SHORT` independently from trend confirmations. These are technical observations, not verified Polymarket opportunities. No real-money execution. The Streamlit deployment must be updated through GitHub; a ZIP does not deploy itself.

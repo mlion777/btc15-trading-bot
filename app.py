@@ -8,7 +8,9 @@ import streamlit as st
 from engine import candles, features, proxy_probability
 from live_signals import technical_signal
 from scalp import scalp_screen
+from setup_diagnostics import describe_setup, entry_diagnostics
 from confirmations import confirm_setup, trade_pressure
+from reversals import reversal_setup
 from streaming_chart import show_streaming_chart
 from microstructure import recent_trades, accumulate_trades, provisional_candles, pressure, supply_demand_zones
 from streamlit_autorefresh import st_autorefresh
@@ -87,18 +89,47 @@ if market and quality['ok'] and up and down and market['reference'] is not None 
     status='WAIT — UNCALIBRATED'
 signal=technical_signal(btc,z,market,up,down,quality,min_edge=min_edge,max_spread=max_spread,fee=fee_pct) if btc is not None else {'bias':'WAIT','candidate':'NONE','prob_up':None,'reason':'No candles','edge':None,'score':0}
 scalp=scalp_screen(z,market,up,down,quality,max_spread=max_spread,fee=fee_pct)
-confirmation=confirm_setup(btc,scalp.get('side')) if scalp.get('side') else None
+# Show developing technical setups even when executable contract filters reject an entry.
+long_confirmation=confirm_setup(btc,'UP') if btc is not None else None
+short_confirmation=confirm_setup(btc,'DOWN') if btc is not None else None
+long_reversal=reversal_setup(btc,'UP') if btc is not None else None
+short_reversal=reversal_setup(btc,'DOWN') if btc is not None else None
+setup=describe_setup(z, long_confirmation if (z.get('ema9',0)>z.get('ema21',0)) else short_confirmation)
+confirmation=long_confirmation if scalp.get('side')=='UP' else short_confirmation if scalp.get('side')=='DOWN' else None
+raw_scalp=dict(scalp)
+tick_age=(now-ticks[-1]['ts']).total_seconds() if ticks else None
+rejections=entry_diagnostics(raw_scalp,quality,market,up,down,confirmation,tick_age)
 if scalp.get('side') and not (confirmation and confirmation['ok']):
-    scalp={'side':None,'reason':'Closed-candle trend / structure / volume confirmation missing', 'status':'NO ENTRY'}
-if scalp.get('side') and not ticks:
-    scalp={'side':None,'reason':'No live spot trades available', 'status':'NO ENTRY'}
-
-if scalp['side'] and ticks and (pd.Timestamp.now(tz='UTC')-ticks[-1]['ts']).total_seconds()>15:
-    scalp={'side':None,'reason':'Coinbase trade feed stale; suppressing scalp candidate'}
-if scalp['side']:
+    scalp={**scalp,'side':None,'reason':'Closed-candle confirmations incomplete','status':'NO ENTRY'}
+if scalp.get('side') and (tick_age is None or tick_age>15):
+    scalp={**scalp,'side':None,'reason':'No fresh observed Coinbase trade','status':'NO ENTRY'}
+st.subheader('Live setup tracker')
+with st.expander('Independent reversal detector — supply rejection / demand bounce', expanded=True):
+    left,right=st.columns(2)
+    for column,side,result in [(left,'LONG',long_reversal),(right,'SHORT',short_reversal)]:
+        if result:
+            column.markdown(f'**{side} REVERSAL:** {result["stage"]}')
+            column.write(result.get('checks',{}))
+            if result.get('candle_time'):column.caption('Closed candle: '+result['candle_time'])
+        else:column.write('Insufficient data')
+    st.caption('Reversal observations do not bypass stale-feed, liquidity, or price-integrity checks. They are not automatic Polymarket orders.')
+a,b,c=st.columns(3)
+a.metric('Technical direction',setup['bias'])
+b.metric('Setup stage',setup['stage'])
+c.metric('Directional score',f"{setup['score']:+d} / 3")
+if setup['bias']!='NEUTRAL':
+    st.info(f"**{setup['bias']} {setup['stage']}** · Trend observation only. A setup is not an entry or evidence of profit.")
+if scalp.get('side'):
     st.success(f"**{scalp['status']}** · Simulated entry {scalp['entry']:.3f} · Illustrative target bid {scalp['exit_target']:.3f} · Gross target {scalp['gross_target_pct']:.1f}% (before costs/slippage)")
 else:
-    st.warning(f"**NO ENTRY** · {scalp['reason']} · The dashboard hides directional calls when filters fail.")
+    st.warning(f"**NO PAPER ENTRY** · {scalp['reason']}")
+with st.expander('Why was an entry blocked? (live diagnostics)',expanded=True):
+    if rejections:
+        for reason in dict.fromkeys(rejections):st.write('• '+reason)
+    else:st.write('No failed pre-screen checks recorded. Review confirmations and quotes.')
+    st.write('LONG candle confirmation:',long_confirmation or 'Unavailable')
+    st.write('SHORT candle confirmation:',short_confirmation or 'Unavailable')
+    st.caption('Technical setup visibility is independent from contract execution and safety checks. No filters have been relaxed to manufacture trades.')
 st.caption('PAPER SCALP is a technical screening result, not a validated profitable opportunity or real-money buy instruction. Target prices are hypothetical, not executable guarantees.')
 if signal['prob_up'] is not None:
     ca,cb,cc=st.columns(3)

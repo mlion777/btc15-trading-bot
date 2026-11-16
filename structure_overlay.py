@@ -1,6 +1,7 @@
 """Causal, closed-candle FVGs and confirmed setup markers. Research only."""
 import pandas as pd
 from confirmations import confirm_setup
+from reversals import reversal_setup
 from microstructure import supply_demand_zones
 
 
@@ -38,4 +39,16 @@ def overlays(df, max_bars=220):
                                 'shape':'arrowUp' if side=='UP' else 'arrowDown',
                                 'text':'PAPER LONG' if side=='UP' else 'PAPER SHORT'})
                 break
-    return {'zones':zones[-6:],'fvgs':fvgs[-12:],'markers':markers[-35:]}
+    # Separate reversal annotations from trend-following confirmations.
+    # The marker is placed on the candle whose close first satisfied the rules.
+    for i in range(35,len(closed)):
+        history=closed.iloc[:i+1]
+        for side in ('UP','DOWN'):
+            result=reversal_setup(history,side)
+            if result['confirmed']:
+                markers.append({'time':ts(i),'position':'belowBar' if side=='UP' else 'aboveBar',
+                                'color':'#45d5f7' if side=='UP' else '#ffb347',
+                                'shape':'arrowUp' if side=='UP' else 'arrowDown',
+                                'text':'REV LONG' if side=='UP' else 'REV SHORT'})
+                break
+    return {'zones':zones[-6:],'fvgs':fvgs[-12:],'markers':sorted(markers,key=lambda m:m['time'])[-55:]}
