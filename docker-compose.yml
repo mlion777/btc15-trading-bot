@@ -1,0 +1,16 @@
+services:
+  dashboard:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    volumes:
+      - btc15_data:/app/data
+  collector:
+    build: .
+    restart: unless-stopped
+    command: ["python","collector.py","--interval","10","--db","/app/data/observations.db"]
+    volumes:
+      - btc15_data:/app/data
+volumes:
+  btc15_data:
