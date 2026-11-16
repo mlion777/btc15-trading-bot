@@ -9,6 +9,7 @@ from engine import candles, features, proxy_probability
 from live_signals import technical_signal
 from scalp import scalp_screen
 from confirmations import confirm_setup, trade_pressure
+from streaming_chart import show_streaming_chart
 from microstructure import recent_trades, accumulate_trades, provisional_candles, pressure, supply_demand_zones
 from streamlit_autorefresh import st_autorefresh
 from advanced import (market_bundle,detailed_book,spot_quality,zones,history_binance,research_backtest,
@@ -108,7 +109,11 @@ st.caption('Technical bias updates on refresh and is NOT a buy instruction. A pa
 
 live,depth,history,paper,testing,health=st.tabs(['📈 Live terminal','📚 Order book & market','🧭 Price zones','📝 Paper portfolio','🧪 Historical lab','🩺 Data health & exports'])
 with live:
-    st.subheader('Live trade-tape and price zones')
+    st.subheader('Streaming BTC candlesticks and price zones')
+    if btc is not None and len(btc)>40:
+        show_streaming_chart(btc,market.get('reference') if market else None)
+        st.caption('This chart uses an independent Coinbase WebSocket inside your browser. The candle updates on incoming trades without rerunning Streamlit. It may temporarily disconnect; it is not the Chainlink settlement feed.')
+    st.subheader('Spot flow and Polymarket depth diagnostics')
     if ticks:
         last=ticks[-1]
         age=(pd.Timestamp.now(tz='UTC')-last['ts']).total_seconds()
@@ -152,7 +157,8 @@ with live:
         if market and market['reference']:
             fig.add_hline(y=market['reference'],line_dash='dash',line_color='#eab308',annotation_text='Source-reported price to beat')
         fig.update_layout(height=540,margin=dict(l=8,r=8,t=12,b=8),xaxis_rangeslider_visible=False,template='plotly_dark',legend_orientation='h',uirevision='btc15',xaxis=dict(type='date',range=[chart.ts.iloc[-1]-pd.Timedelta(minutes=80),now+pd.Timedelta(minutes=2)]))
-        st.plotly_chart(fig,use_container_width=True,config={'scrollZoom':True,'displaylogo':False})
+        with st.expander('Show legacy snapshot chart (updates on page refresh)'):
+            st.plotly_chart(fig,use_container_width=True,config={'scrollZoom':True,'displaylogo':False})
         if market and spot and market['reference']:
             distance=spot-market['reference']
             st.metric('Spot minus source-reported strike (NOT oracle)',f'${distance:+,.2f}',f'{100*distance/market["reference"]:+.3f}%')

@@ -123,3 +123,12 @@ The live terminal now shows PAPER SCALP UP or PAPER SCALP DOWN only when trend c
 - Allows a 1-second Streamlit refresh interval, but REST polling is **not** tick-by-tick streaming and may be rate-limited. Continuous WebSocket infrastructure is still required for reliable subsecond feeds.
 - No real-money trading and no claim of replicating Bucko's proprietary strategy or having a validated edge.
 - Tested with `pytest -q` (21 tests).
+
+## V8: in-browser WebSocket streaming chart
+
+The Live terminal now embeds a Lightweight Charts v4 candlestick chart. It subscribes directly from the browser to Coinbase Exchange's public `matches` channel for `BTC-USD` (`wss://ws-feed.exchange.coinbase.com`). The current 1-minute candle changes with observed trades without a Streamlit rerun. There is a feed-status indicator, last-trade age, 60-second inferred aggressive trade flow, confirmed pivot-derived supply/demand price lines, and a source-reported price-to-beat line. The old snapshot chart remains under an expander.
+
+**Caveats:** Browser WebSocket connectivity and CDN access are required. The feed can drop messages or disconnect, and this implementation does not reconstruct missed trades after reconnection. Closed historical bars and the streaming exchange may differ in provenance. The chart is Coinbase BTC-USD spot, not Chainlink oracle settlement data or Polymarket order execution. Pivot-derived zones are descriptive, not independently verified liquidity. The chart does not claim proprietary Bucko signals or automatically execute orders. Streamlit reruns may recreate the iframe; for production-grade persistent tick capture and execution research, use a separate always-on backend and database.
+
+## V9 visual overlay
+The streaming Coinbase chart now paints translucent historical swing-pivot supply/demand rectangles and unfilled three-candle fair-value gaps, and attaches historical paper LONG/SHORT confirmation arrows to their closed candles. The final candle is treated as provisional and excluded from signal generation. These overlays are price-action heuristics, **not** Bucko's undisclosed proprietary indicator, validated trade opportunities, or live real-money entry instructions. Existing Streamlit-side NO ENTRY filters still apply; arrows are historical technical confirmations, not trade executions. Chart data and Polymarket settlement references may differ. The browser WebSocket can disconnect or miss trades. This version does not execute orders.
