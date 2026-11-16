@@ -8,6 +8,7 @@ import streamlit as st
 from engine import candles, features, proxy_probability
 from live_signals import technical_signal
 from scalp import scalp_screen
+from confirmations import confirm_setup, trade_pressure
 from microstructure import recent_trades, accumulate_trades, provisional_candles, pressure, supply_demand_zones
 from streamlit_autorefresh import st_autorefresh
 from advanced import (market_bundle,detailed_book,spot_quality,zones,history_binance,research_backtest,
@@ -19,7 +20,7 @@ st.title('₿ BTC15 Intelligence Terminal')
 st.caption('POLYMARKET BTC 15-MIN UP/DOWN  •  LIVE MARKET RESEARCH  •  PAPER TRADING ONLY  •  NO EXECUTION KEYS')
 with st.sidebar:
     st.header('Terminal settings')
-    refresh=st.slider('Refresh every (seconds)',2,60,2)
+    refresh=st.slider('Refresh every (seconds)',1,60,2)
     auto_refresh=st.toggle('Auto-refresh live dashboard',value=True)
     if auto_refresh:st_autorefresh(interval=refresh*1000,key='btc15_auto_refresh')
     stake=st.number_input('Paper order size ($)',1.,10000.,10.,1.)
@@ -85,6 +86,12 @@ if market and quality['ok'] and up and down and market['reference'] is not None 
     status='WAIT — UNCALIBRATED'
 signal=technical_signal(btc,z,market,up,down,quality,min_edge=min_edge,max_spread=max_spread,fee=fee_pct) if btc is not None else {'bias':'WAIT','candidate':'NONE','prob_up':None,'reason':'No candles','edge':None,'score':0}
 scalp=scalp_screen(z,market,up,down,quality,max_spread=max_spread,fee=fee_pct)
+confirmation=confirm_setup(btc,scalp.get('side')) if scalp.get('side') else None
+if scalp.get('side') and not (confirmation and confirmation['ok']):
+    scalp={'side':None,'reason':'Closed-candle trend / structure / volume confirmation missing', 'status':'NO ENTRY'}
+if scalp.get('side') and not ticks:
+    scalp={'side':None,'reason':'No live spot trades available', 'status':'NO ENTRY'}
+
 if scalp['side'] and ticks and (pd.Timestamp.now(tz='UTC')-ticks[-1]['ts']).total_seconds()>15:
     scalp={'side':None,'reason':'Coinbase trade feed stale; suppressing scalp candidate'}
 if scalp['side']:
@@ -109,6 +116,12 @@ with live:
         if age>15:st.warning('Spot trade feed is stale (>15s); ignore live scalp candidates.')
     else:
         st.warning('Coinbase recent trades unavailable; only historical closed candles are shown. '+(tick_error or ''))
+    flow=trade_pressure(ticks)
+    if flow:
+        st.write(f'**Coinbase aggressive spot trade flow (observed 60s):** buys ${flow["aggressive_buy_usd"]:,.0f} / sells ${flow["aggressive_sell_usd"]:,.0f} · imbalance {flow["imbalance"]:+.1%} · {flow["trades"]} observed trades')
+        st.caption('Coinbase trade side is the maker side; aggressive flow is inferred from it. Polled trade history may miss trades.')
+    if confirmation:
+        st.write('**Closed-candle confirmation:**', {k:confirmation[k] for k in ('trend','bos','rejection','volume','candle_time')})
     for label,ob in [('UP',up),('DOWN',down)]:
         p=pressure(ob)
         if p:
@@ -153,6 +166,7 @@ with live:
         a.metric('EMA trend',z['trend']);b.metric('RSI (14)',f"{z['rsi14']:.1f}" if z['rsi14'] is not None else '—')
         c.metric('MACD histogram',f"{z['macd_histogram']:+.2f}")
         d.metric('1m log-return volatility',f"{z['volatility_1m']:.5f}" if z['volatility_1m'] else '—')
+    st.caption('Scalp markers require completed-candle trend, structure breakout, decisive close, and volume confirmation. These rules are independent research logic, not Bucko proprietary settings.')
     st.caption('The current 1-minute candle is provisional and reconstructed from recent Coinbase trade polls; gaps and missed trades are possible. The completed historical bars may come from a different exchange. Demand/supply bands are confirmed historical pivots, not guaranteed liquidity zones. Paper candidate markers are not validated entries.')
 with depth:
     if market:

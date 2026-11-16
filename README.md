@@ -115,3 +115,11 @@ The live terminal now shows PAPER SCALP UP or PAPER SCALP DOWN only when trend c
 - PAPER UP/DOWN markers only annotate candidates already passing V5's conservative filter; they are not validated trade recommendations. Live spot trade freshness (>15 seconds) suppresses the display of an existing candidate. Indicators and screening still use completed bars; the provisional candle is visual context only.
 - Streamlit Community Cloud cannot guarantee uninterrupted subsecond/tick capture, nor persistent data between restarts. A dedicated websocket service and managed storage are needed for production tick completeness.
 - Deploy by uploading `app.py`, `microstructure.py`, and the other included files to the root of the existing GitHub repo, then committing. The Streamlit app should redeploy automatically.
+
+## V7 closed-candle confirmation upgrade
+- Adds `confirmations.py` with independently implemented, non-repainting EMA 9/21/55 trend, 12-candle close break of structure, decisive directional candle, and 1.15x median volume confirmation.
+- A PAPER scalp signal is suppressed unless all four confirmations pass; otherwise NO ENTRY.
+- Adds observed Coinbase aggressive spot buying/selling flow, distinct from Polymarket contract depth.
+- Allows a 1-second Streamlit refresh interval, but REST polling is **not** tick-by-tick streaming and may be rate-limited. Continuous WebSocket infrastructure is still required for reliable subsecond feeds.
+- No real-money trading and no claim of replicating Bucko's proprietary strategy or having a validated edge.
+- Tested with `pytest -q` (21 tests).
