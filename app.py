@@ -1,4 +1,5 @@
 from opportunity_watch import watch
+from auto_paper import tick as paper_tick
 """BTC15 Signal Lab v2. Research dashboard; no real-money execution."""
 import io, json, time
 from pathlib import Path
@@ -24,14 +25,16 @@ st.title('₿ BTC15 Intelligence Terminal')
 st.caption('POLYMARKET BTC 15-MIN UP/DOWN  •  LIVE MARKET RESEARCH  •  PAPER TRADING ONLY  •  NO EXECUTION KEYS')
 with st.sidebar:
     st.header('Terminal settings')
-    refresh=st.slider('Refresh every (seconds)',1,60,2)
-    auto_refresh=st.toggle('Auto-refresh full page (can interrupt streaming chart)',value=False)
+    refresh=st.slider('Refresh every (seconds)',3,60,5)
+    auto_refresh=st.toggle('Auto-refresh dashboard every 5s',value=True)
     if auto_refresh:st_autorefresh(interval=refresh*1000,key='btc15_auto_refresh')
     stake=st.number_input('Paper order size ($)',1.,10000.,10.,1.)
     fee_pct=st.slider('Paper fee assumption (%)',0.,10.,1.,.1)/100
     min_edge=st.slider('Minimum modeled edge (percentage points)',1,30,8)/100
     max_spread=st.slider('Maximum acceptable spread',.01,.25,.08,.01)
-    st.warning('All model probabilities in live view are illustrative and UNCALIBRATED. A real edge is NOT established. No automatic entries.')
+    auto_paper_enabled=st.toggle('Automatically record qualifying PAPER trades',value=True)
+    min_paper_votes=st.slider('Minimum technical votes for paper entry',3,7,4)
+    st.caption('Paper only. Technical scores are not calibrated win probabilities. No broker credentials or live orders.')
     st.markdown('**Feed status** and snapshot capture are visible below. Refresh works only while the app is running.')
 
 @st.cache_data(ttl=8,show_spinner=False)
@@ -110,7 +113,20 @@ if opportunity['side']:
     st.info(f"**{opportunity['side']} WATCH — {opportunity['stage']}** · Technical votes {opportunity['votes']} · Not a confirmed or validated Polymarket entry.")
 else:
     st.write(f"WATCH: {opportunity['stage']} · {opportunity['reason']}")
-st.caption('A watch can appear without a trade. PAPER ENTRY still requires fresh quotes, depth, spread, and candle confirmation. Do not interpret technical votes as a probability.')
+st.caption('A watch can appear without a trade. Technical votes are NOT win probabilities.')
+paper_result=paper_tick(market,opportunity,quality,up,down,tick_age,stake,fee_pct,max_spread,auto_paper_enabled,min_paper_votes)
+st.subheader('Automatic paper-trading desk')
+if paper_result['events']:
+    for event in paper_result['events']:st.success(event)
+if paper_result['positions']:
+    latest=paper_result['positions'][0]
+    st.write(f"**Latest paper position:** {latest['side']} · ${latest['stake']:.2f} stake · {latest['state']} · entry {latest['entry']:.3f}")
+    st.caption(latest['reason'])
+    if latest['exit_reason']:st.write('Exit:',latest['exit_reason'],'· Net P&L:',latest['pnl'])
+if paper_result['blocked']:st.info('Why no new automatic paper trade: '+'; '.join(paper_result['blocked']))
+with st.expander('Automatic paper trade history',expanded=False):
+    st.dataframe(pd.DataFrame(paper_result['positions']),use_container_width=True,hide_index=True)
+st.caption('Automatic entries and exits use observed order-book snapshots and assumed fees; fills and profitability are not guaranteed. Open positions may remain unresolved if quotes vanish or the app sleeps.')
 st.subheader('Live setup tracker')
 with st.expander('Independent reversal detector — supply rejection / demand bounce', expanded=True):
     left,right=st.columns(2)
@@ -151,7 +167,7 @@ with live:
     st.subheader('Streaming BTC candlesticks and price zones')
     if btc is not None and len(btc)>40:
         st.caption('If the streaming chart is blank, use the backup candlestick chart below.')
-        show_streaming_chart(btc,market.get('reference') if market else None)
+        st.caption('Primary chart below uses Streamlit Plotly rather than browser-side WebSockets, avoiding the blank-chart failure.')
     else:
         st.warning('Chart data unavailable: historical candles did not load.')
         st.caption('This chart uses an independent Coinbase WebSocket inside your browser. The candle updates on incoming trades without rerunning Streamlit. It may temporarily disconnect; it is not the Chainlink settlement feed.')
@@ -199,8 +215,7 @@ with live:
         if market and market['reference']:
             fig.add_hline(y=market['reference'],line_dash='dash',line_color='#eab308',annotation_text='Source-reported price to beat')
         fig.update_layout(height=540,margin=dict(l=8,r=8,t=12,b=8),xaxis_rangeslider_visible=False,template='plotly_dark',legend_orientation='h',uirevision='btc15',xaxis=dict(type='date',range=[chart.ts.iloc[-1]-pd.Timedelta(minutes=80),now+pd.Timedelta(minutes=2)]))
-        with st.expander('Backup candlestick chart (works without WebSocket)', expanded=True):
-            st.plotly_chart(fig,use_container_width=True,config={'scrollZoom':True,'displaylogo':False})
+        st.plotly_chart(fig,use_container_width=True,config={'scrollZoom':True,'displaylogo':False})
         if market and spot and market['reference']:
             distance=spot-market['reference']
             st.metric('Spot minus source-reported strike (NOT oracle)',f'${distance:+,.2f}',f'{100*distance/market["reference"]:+.3f}%')
@@ -214,7 +229,7 @@ with live:
         a.metric('EMA trend',z['trend']);b.metric('RSI (14)',f"{z['rsi14']:.1f}" if z['rsi14'] is not None else '—')
         c.metric('MACD histogram',f"{z['macd_histogram']:+.2f}")
         d.metric('1m log-return volatility',f"{z['volatility_1m']:.5f}" if z['volatility_1m'] else '—')
-    st.caption('Scalp markers require completed-candle trend, structure breakout, decisive close, and volume confirmation. These rules are independent research logic, not Bucko proprietary settings.')
+    st.caption('Automatic paper entries use independent directional-vote scoring plus data quality and order-book checks; not Bucko proprietary logic.')
     st.caption('The current 1-minute candle is provisional and reconstructed from recent Coinbase trade polls; gaps and missed trades are possible. The completed historical bars may come from a different exchange. Demand/supply bands are confirmed historical pivots, not guaranteed liquidity zones. Paper candidate markers are not validated entries.')
 with depth:
     if market:

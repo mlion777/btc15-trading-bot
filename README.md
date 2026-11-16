@@ -135,3 +135,15 @@ The streaming Coinbase chart now paints translucent historical swing-pivot suppl
 
 ## V11 reversal detection
 Independent causal reversal detector (`reversals.py`) with supply/demand touch, decisive closed candle, short-term structure break, and directional turn diagnostics. Chart marks `REV LONG` / `REV SHORT` independently from trend confirmations. These are technical observations, not verified Polymarket opportunities. No real-money execution. The Streamlit deployment must be updated through GitHub; a ZIP does not deploy itself.
+
+## Automatic paper desk (experimental)
+
+This independent educational simulator is **not Bucko's Belugo source code**. The app now displays a native Plotly candlestick chart rather than relying on browser-side WebSocket rendering, and refreshes the page every five seconds by default. The 15-minute time-left metric is restored.
+
+The automatic paper desk uses directional technical votes (EMA, MACD, RSI, closed-candle confirmation, reversal confirmation), but **votes are not probabilities**. The default minimum is four votes and a two-vote lead. A paper entry also requires a current supported market, a source-reported price-to-beat, fresh completed candles, a recent Coinbase trade, an entry between 2 and 13 minutes before expiry, adequate order-book depth, a price between $0.08 and $0.82, and a spread no greater than the configured limit. The bot opens at most one paper position per market and at most one open position at a time. It uses a simulated $10 stake by default, sells at the observed best bid at +8% net P&L or -10% net P&L, and attempts to exit with 75 seconds remaining. A fee assumption is deducted on both entry and exit. Quotes are snapshots; fills are hypothetical, and live performance is **not validated**. If the app sleeps or no exit quote exists at expiry, a position is marked AWAITING_OFFICIAL_SETTLEMENT rather than falsely scored as a win or loss.
+
+The auto paper history is stored in local `auto_paper.db`, which may be ephemeral on Streamlit Community Cloud and is not a reliable unattended background service. Auto paper checks run **only while Streamlit is actively rerunning**. No real trades are sent. For persistent 24/7 simulation, deploy a dedicated worker and durable database; a Streamlit browser dashboard alone cannot guarantee continuous operation.
+
+### Install/update
+
+Back up your repository, then replace its root files with the contents of this ZIP's `btc15_belugo_style` folder (not the folder itself). Preserve Streamlit secrets, if any. Install `requirements.txt`. The entry point remains `app.py`. Do not copy old ZIP versions on top of this release. This build does not require broker credentials.
