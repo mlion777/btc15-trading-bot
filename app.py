@@ -133,6 +133,7 @@ if opportunity['side']:
 else:
     st.write(f"WATCH: {opportunity['stage']} · {opportunity['reason']}")
 st.caption('A watch can appear without a trade. Technical votes are NOT win probabilities.')
+paper_result=paper_tick(market,opportunity,quality,up,down,tick_age,stake,fee_pct,max_spread,auto_paper_enabled,min_paper_votes)
 closed_paper=[x for x in paper_result.get('positions',[]) if x.get('state')=='CLOSED' and x.get('pnl') is not None]
 open_paper=[x for x in paper_result.get('positions',[]) if x.get('state')=='OPEN']
 paper_net=sum(float(x['pnl']) for x in closed_paper)
