@@ -103,3 +103,15 @@ python -m unittest discover -v
 ### Further work requiring external infrastructure/data
 
 Independent Chainlink oracle verification, historical official resolution reconciliation, authenticated tick/order-book stream collection, latency-measured replay, calibrated models trained on verified settlement outcomes, monitoring/alerting, cloud hosting, and independent profitability audits require reliable external data, hosting and operational validation. They are **not** completed by this source-code release.
+
+## V5 selective paper scalp screening
+The live terminal now shows PAPER SCALP UP or PAPER SCALP DOWN only when trend confirmation, market timing, order-book depth, spread, and entry-price constraints pass. Otherwise it shows NO ENTRY. This is NOT a statistically validated profit signal. Illustrative target prices do not guarantee an executable exit. The candle chart uses closed 1-minute spot candles and refreshes at a configurable 2–60 second cadence; it is not tick-level streaming. Streamlit Cloud may suspend idle apps and does not run the separate collector as an always-on worker.
+
+## V6 near-real-time scalp chart
+- New `microstructure.py`: Coinbase BTC-USD public recent-trades polling, deduplicated per Streamlit session. Default dashboard refresh is 2 seconds; actual polling interval and API response time can vary.
+- Current minute's provisional candle is built from *observed* Coinbase trades and overlaid on closed historical candles. It is **not** a complete tick feed; trades can be missed between polls, on app sleep, or during network outages. Historical closed candles can be from Binance, so price discontinuities are possible.
+- Price bands are mechanically derived from confirmed rolling pivot highs/lows, with ATR-based width. These are heuristic support/resistance proxies, not verified institutional demand/supply zones.
+- Both Polymarket contract books show top-five-level USD bid/ask resting depth and imbalance. This does not measure aggressive order flow or guarantee fills.
+- PAPER UP/DOWN markers only annotate candidates already passing V5's conservative filter; they are not validated trade recommendations. Live spot trade freshness (>15 seconds) suppresses the display of an existing candidate. Indicators and screening still use completed bars; the provisional candle is visual context only.
+- Streamlit Community Cloud cannot guarantee uninterrupted subsecond/tick capture, nor persistent data between restarts. A dedicated websocket service and managed storage are needed for production tick completeness.
+- Deploy by uploading `app.py`, `microstructure.py`, and the other included files to the root of the existing GitHub repo, then committing. The Streamlit app should redeploy automatically.

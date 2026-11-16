@@ -6,6 +6,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from engine import candles, features, proxy_probability
+from live_signals import technical_signal
+from scalp import scalp_screen
+from microstructure import recent_trades, accumulate_trades, provisional_candles, pressure, supply_demand_zones
+from streamlit_autorefresh import st_autorefresh
 from advanced import (market_bundle,detailed_book,spot_quality,zones,history_binance,research_backtest,
     reliability_table,evaluate_market_predictions,init_research_db,record_snapshot,record_trade,settle_trade,market_history)
 
@@ -15,7 +19,9 @@ st.title('₿ BTC15 Intelligence Terminal')
 st.caption('POLYMARKET BTC 15-MIN UP/DOWN  •  LIVE MARKET RESEARCH  •  PAPER TRADING ONLY  •  NO EXECUTION KEYS')
 with st.sidebar:
     st.header('Terminal settings')
-    refresh=st.slider('Refresh every (seconds)',5,60,15)
+    refresh=st.slider('Refresh every (seconds)',2,60,2)
+    auto_refresh=st.toggle('Auto-refresh live dashboard',value=True)
+    if auto_refresh:st_autorefresh(interval=refresh*1000,key='btc15_auto_refresh')
     stake=st.number_input('Paper order size ($)',1.,10000.,10.,1.)
     fee_pct=st.slider('Paper fee assumption (%)',0.,10.,1.,.1)/100
     min_edge=st.slider('Minimum modeled edge (percentage points)',1,30,8)/100
@@ -27,10 +33,13 @@ with st.sidebar:
 def fetch_market():return market_bundle()
 @st.cache_data(ttl=10,show_spinner=False)
 def fetch_candles():return candles()
-@st.cache_data(ttl=8,show_spinner=False)
+@st.cache_data(ttl=2,show_spinner=False)
 def fetch_book(token,size):return detailed_book(token,size)
 @st.cache_data(ttl=30,show_spinner=False)
 def fetch_history(token,start,end):return market_history(token,start,end)
+
+@st.cache_data(ttl=2,show_spinner=False)
+def fetch_ticks():return recent_trades(100)
 
 con=init_research_db(str(Path(__file__).with_name('research.db')))
 market=btc=source=up=down=None
@@ -42,6 +51,16 @@ except Exception as e:errors.append('Bitcoin spot candles: '+str(e))
 if market:
     try:up=fetch_book(market['up'],stake);down=fetch_book(market['down'],stake)
     except Exception as e:errors.append('CLOB order books: '+str(e))
+# Poll recent exchange trades. Repeated polling is near-real-time, NOT a true websocket tick stream.
+ticks=[];tick_error=None
+try:
+    fresh=fetch_ticks()
+    st.session_state['recent_spot_trades']=accumulate_trades(st.session_state.get('recent_spot_trades',[]),fresh)
+    ticks=st.session_state['recent_spot_trades']
+except Exception as exc:
+    tick_error=str(exc)
+    st.session_state['recent_spot_trades']=[]  # fail closed; do not show old trades as live
+
 for e in errors:st.error(e)
 now=pd.Timestamp.now(tz='UTC')
 if btc is not None:
@@ -50,11 +69,12 @@ if btc is not None:
 quality=spot_quality(btc,now) if btc is not None else {'ok':False,'reason':'Unavailable'}
 z=zones(btc) if btc is not None and len(btc)>60 else {}
 spot=z.get('spot')
+if ticks:spot=ticks[-1]['price']  # Coinbase last observed trade, distinct from closed-candle proxy
 if market:
     st.markdown(f"**Market:** [{market['slug']}]({market['url']}) · **UTC start:** {pd.to_datetime(market['start'],unit='s',utc=True)} · **UTC end:** {pd.to_datetime(market['end'],unit='s',utc=True)}")
 
 c1,c2,c3,c4,c5=st.columns(5)
-c1.metric('BTC spot (proxy)',f'${spot:,.2f}' if spot else '—')
+c1.metric('BTC spot (Coinbase trade proxy)' ,f'${spot:,.2f}' if spot else '—')
 c2.metric('Price to beat (source)',f"${market['reference']:,.2f}" if market and market['reference'] else 'UNAVAILABLE')
 c3.metric('Time remaining',f"{int(market['seconds_left'])//60:02d}:{int(market['seconds_left'])%60:02d}" if market else '—')
 c4.metric('UP best ask',f"{up['ask']:.3f}" if up and up['ask'] is not None else '—')
@@ -63,20 +83,63 @@ c5.metric('DOWN best ask',f"{down['ask']:.3f}" if down and down['ask'] is not No
 status='WAIT — DATA NOT READY'
 if market and quality['ok'] and up and down and market['reference'] is not None and market['seconds_left']>30:
     status='WAIT — UNCALIBRATED'
-st.info(f'**LIVE SIGNAL: {status}**  |  No statistically validated Polymarket win probability is available. Signals are intentionally blocked.')
+signal=technical_signal(btc,z,market,up,down,quality,min_edge=min_edge,max_spread=max_spread,fee=fee_pct) if btc is not None else {'bias':'WAIT','candidate':'NONE','prob_up':None,'reason':'No candles','edge':None,'score':0}
+scalp=scalp_screen(z,market,up,down,quality,max_spread=max_spread,fee=fee_pct)
+if scalp['side'] and ticks and (pd.Timestamp.now(tz='UTC')-ticks[-1]['ts']).total_seconds()>15:
+    scalp={'side':None,'reason':'Coinbase trade feed stale; suppressing scalp candidate'}
+if scalp['side']:
+    st.success(f"**{scalp['status']}** · Simulated entry {scalp['entry']:.3f} · Illustrative target bid {scalp['exit_target']:.3f} · Gross target {scalp['gross_target_pct']:.1f}% (before costs/slippage)")
+else:
+    st.warning(f"**NO ENTRY** · {scalp['reason']} · The dashboard hides directional calls when filters fail.")
+st.caption('PAPER SCALP is a technical screening result, not a validated profitable opportunity or real-money buy instruction. Target prices are hypothetical, not executable guarantees.')
+if signal['prob_up'] is not None:
+    ca,cb,cc=st.columns(3)
+    ca.metric('Volatility-proxy UP likelihood (UNCALIBRATED)',f"{signal['prob_up']:.1%}")
+    cb.metric('Volatility-proxy DOWN likelihood (UNCALIBRATED)',f"{1-signal['prob_up']:.1%}")
+    cc.metric('Research edge vs executable ask',f"{signal['edge']:+.1%}" if signal['edge'] is not None else 'NO QUALIFYING QUOTE')
+st.caption('Technical bias updates on refresh and is NOT a buy instruction. A paper candidate is a hypothesis, not a verified edge. Source-reported strike is not independently oracle verified. No live trading orders are placed.')
 
 live,depth,history,paper,testing,health=st.tabs(['📈 Live terminal','📚 Order book & market','🧭 Price zones','📝 Paper portfolio','🧪 Historical lab','🩺 Data health & exports'])
 with live:
+    st.subheader('Live trade-tape and price zones')
+    if ticks:
+        last=ticks[-1]
+        age=(pd.Timestamp.now(tz='UTC')-last['ts']).total_seconds()
+        st.caption(f'Coinbase BTC-USD latest observed trade: {last["ts"]} UTC · {age:.1f}s old · {len(ticks)} unique recent trades collected while this session is open. Polls every {refresh}s, not every exchange tick.')
+        if age>15:st.warning('Spot trade feed is stale (>15s); ignore live scalp candidates.')
+    else:
+        st.warning('Coinbase recent trades unavailable; only historical closed candles are shown. '+(tick_error or ''))
+    for label,ob in [('UP',up),('DOWN',down)]:
+        p=pressure(ob)
+        if p:
+            st.write(f'**{label} contract top-five-level depth:** bids ${p["bid_usd"]:,.0f} / asks ${p["ask_usd"]:,.0f} · bid share {p["bid_share"]:.0%} · imbalance {p["imbalance"]:+.1%}')
+            st.progress(max(0.,min(1.,p['bid_share'])))
+    st.caption('Order-book pressure is resting liquidity, not actual market buy/sell flow. UP and DOWN are separate contracts. Quotes may change or be cancelled.')
     if btc is not None and len(btc)>40:
-        chart=btc.tail(240);fig=go.Figure()
-        fig.add_trace(go.Candlestick(x=chart.ts,open=chart.open,high=chart.high,low=chart.low,close=chart.close,name='BTC spot proxy'))
+        chart=btc.tail(240).copy()
+        live_candles=provisional_candles(ticks)
+        if not live_candles.empty:
+            # Only overlay the current incomplete minute; avoid replacing authoritative historical bars.
+            live_candles=live_candles[live_candles.ts>=now.floor('min')]
+            chart=pd.concat([chart,live_candles],ignore_index=True).sort_values('ts').drop_duplicates('ts',keep='last')
+        fig=go.Figure()
+        fig.add_trace(go.Candlestick(x=chart.ts,open=chart.open,high=chart.high,low=chart.low,close=chart.close,name='BTC 1m candles + provisional trade-built candle'))
         for key,color in [('ema9','#5bc0eb'),('ema21','#f6c453'),('ema55','#bd8cff')]:
-            s=btc.close.ewm(span=int(key[3:]),adjust=False).mean().tail(len(chart))
-            fig.add_trace(go.Scatter(x=chart.ts,y=s,name=key.upper(),line=dict(color=color,width=1.3)))
+            s=btc.close.ewm(span=int(key[3:]),adjust=False).mean().tail(min(len(btc),240))
+            fig.add_trace(go.Scatter(x=btc.ts.tail(len(s)),y=s,name=key.upper(),line=dict(color=color,width=1.3)))
+        zone_data=supply_demand_zones(btc)
+        for kind,color in [('demand','rgba(22,163,74,0.18)'),('supply','rgba(239,68,68,0.18)')]:
+            for band in zone_data[kind]:
+                fig.add_hrect(y0=band['low'],y1=band['high'],fillcolor=color,line_width=0,
+                              annotation_text=kind.upper(),annotation_position='top left')
+        if scalp.get('side') and ticks and (now-ticks[-1]['ts']).total_seconds()<=15:
+            fig.add_annotation(x=chart.ts.iloc[-1],y=spot,text='PAPER '+scalp['side']+' candidate',
+                               showarrow=True,arrowhead=2,ay=-55 if scalp['side']=='UP' else 55,
+                               bgcolor='#164e3a' if scalp['side']=='UP' else '#7f1d1d',font=dict(color='white'))
         if market and market['reference']:
             fig.add_hline(y=market['reference'],line_dash='dash',line_color='#eab308',annotation_text='Source-reported price to beat')
-        fig.update_layout(height=460,margin=dict(l=8,r=8,t=12,b=8),xaxis_rangeslider_visible=False,template='plotly_dark',legend_orientation='h')
-        st.plotly_chart(fig,use_container_width=True)
+        fig.update_layout(height=540,margin=dict(l=8,r=8,t=12,b=8),xaxis_rangeslider_visible=False,template='plotly_dark',legend_orientation='h',uirevision='btc15',xaxis=dict(type='date',range=[chart.ts.iloc[-1]-pd.Timedelta(minutes=80),now+pd.Timedelta(minutes=2)]))
+        st.plotly_chart(fig,use_container_width=True,config={'scrollZoom':True,'displaylogo':False})
         if market and spot and market['reference']:
             distance=spot-market['reference']
             st.metric('Spot minus source-reported strike (NOT oracle)',f'${distance:+,.2f}',f'{100*distance/market["reference"]:+.3f}%')
@@ -90,7 +153,7 @@ with live:
         a.metric('EMA trend',z['trend']);b.metric('RSI (14)',f"{z['rsi14']:.1f}" if z['rsi14'] is not None else '—')
         c.metric('MACD histogram',f"{z['macd_histogram']:+.2f}")
         d.metric('1m log-return volatility',f"{z['volatility_1m']:.5f}" if z['volatility_1m'] else '—')
-    st.caption('Trend indicators describe recent spot behavior, not the probability of the binary contract resolving UP.')
+    st.caption('The current 1-minute candle is provisional and reconstructed from recent Coinbase trade polls; gaps and missed trades are possible. The completed historical bars may come from a different exchange. Demand/supply bands are confirmed historical pivots, not guaranteed liquidity zones. Paper candidate markers are not validated entries.')
 with depth:
     if market:
         st.write('**Market rules (always review before relying on the price to beat)**')
@@ -255,8 +318,7 @@ if market and up and down and quality['ok'] and spot and z:
     except Exception as e:st.warning('Snapshot logging failed: '+str(e))
 con.close()
 st.caption('No real-money execution · No guaranteed predictions · Quotes may be stale · Historical proxy metrics are not verified Polymarket performance')
-time.sleep(refresh)
-st.rerun()
+# Streamlit autorefresh handles reruns; avoid blocking the rest of the app.
 
 # V3 persistent collector, walk-forward diagnostics and conservative signal governance.
 from production import open_db as open_operations_db, summary as operations_summary, audit_observations, rolling_proxy, signal_gate
