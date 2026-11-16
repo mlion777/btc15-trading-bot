@@ -41,17 +41,25 @@ def tick(market, opportunity, quality, up, down, tick_age, stake=10,fee_rate=.01
     """Call on each refresh. Uses UNIQUE market to avoid repeat entries across sessions."""
     c=db();now=time.time();events=[]
     try:
-        rows=c.execute("SELECT id,side,shares,entry,stake,fee_in,expires FROM auto_positions WHERE state='OPEN'").fetchall()
-        for ident,side,shares,entry,cost,fee_in,expires in rows:
+        rows=c.execute("SELECT id,side,shares,entry,stake,fee_in,expires,opened FROM auto_positions WHERE state='OPEN'").fetchall()
+        for ident,side,shares,entry,cost,fee_in,expires,opened in rows:
             ob=up if side=='UP' else down
             bid=ob.get('bid') if ob and market and market.get('slug')==c.execute('SELECT market FROM auto_positions WHERE id=?',(ident,)).fetchone()[0] else None
             if bid is not None and 0<float(bid)<=1:
                 # Conservative: sell into bid, and deduct assumed fee on proceeds.
                 net=shares*float(bid)*(1-fee_rate)-cost-fee_in
-                target=max(.045,2*(ob.get('spread') or .02))
-                if net>=cost*.08:exit_reason='TAKE PROFIT'
-                elif net<=-cost*.10:exit_reason='STOP LOSS'
-                elif now>=expires-75:exit_reason='EXIT BUFFER'
+                held_seconds=max(0,now-opened)
+                # The initial bid/ask spread is not evidence that the BTC thesis failed.
+                # Compare adverse movement with the bid observable at entry (approx. entry minus spread).
+                spread=max(0,float(ob.get('spread') or 0))
+                entry_bid_estimate=max(.01,float(entry)-spread)
+                adverse_bid_move=(float(bid)-entry_bid_estimate)/entry_bid_estimate
+                # Never suppress a large emergency loss, even during the initial grace period.
+                emergency=net<=-cost*.25
+                if now>=expires-75:exit_reason='EXIT BUFFER'
+                elif emergency:exit_reason='EMERGENCY STOP'
+                elif net>=cost*.08:exit_reason='TAKE PROFIT'
+                elif held_seconds>=20 and adverse_bid_move<=-.08:exit_reason='ADVERSE PRICE STOP'
                 else:exit_reason=None
                 if exit_reason:
                     c.execute('UPDATE auto_positions SET state=?,exit_price=?,fee_out=?,pnl=?,exit_reason=? WHERE id=?',
