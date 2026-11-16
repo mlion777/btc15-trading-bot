@@ -1,4 +1,5 @@
 from opportunity_watch import watch
+from price_action import analyze as analyze_price_action
 from auto_paper import tick as paper_tick
 """BTC15 Signal Lab v2. Research dashboard; no real-money execution."""
 import io, json, time
@@ -107,7 +108,15 @@ if scalp.get('side') and not (confirmation and confirmation['ok']):
     scalp={**scalp,'side':None,'reason':'Closed-candle confirmations incomplete','status':'NO ENTRY'}
 if scalp.get('side') and (tick_age is None or tick_age>15):
     scalp={**scalp,'side':None,'reason':'No fresh observed Coinbase trade','status':'NO ENTRY'}
-opportunity=watch(z,long_confirmation,short_confirmation,long_reversal,short_reversal)
+price_action=analyze_price_action(btc,market,spot)
+opportunity=watch(z,long_confirmation,short_confirmation,long_reversal,short_reversal,price_action)
+st.subheader("BTC directional read — always visible")
+if price_action["side"]:
+    st.info(f"**{price_action['side']} — {price_action['stage']}** · Price-action votes {price_action['votes']} · This is a directional observation, NOT an instruction to buy.")
+else:
+    st.warning(f"**WAIT — {price_action['stage']}** · Price-action votes {price_action['votes']}")
+if price_action["reasons"]:st.caption("Why: "+"; ".join(price_action["reasons"]))
+if "contract_move_pct" in price_action:st.caption(f"BTC versus contract price-to-beat: {price_action['contract_move_pct']:+.3f}% (source reference, not independently verified)")
 st.subheader('Scalp opportunity watch — experimental')
 if opportunity['side']:
     st.info(f"**{opportunity['side']} WATCH — {opportunity['stage']}** · Technical votes {opportunity['votes']} · Not a confirmed or validated Polymarket entry.")
