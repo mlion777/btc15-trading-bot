@@ -211,6 +211,26 @@ function onTrade(raw){
   chart.timeScale().setVisibleLogicalRange({from:Math.max(-1,ten.length-65),to:ten.length+5});
   candle.setMarkers(signals.filter(x=>x.time>=ten[0].time));
  }
+ // While 10-second history warms up, keep the visible 1-minute candle LIVE.
+ // Previously V26 left the historical chart frozen for ~6 minutes.
+ if(!tenMode){
+  const minuteBucket=Math.floor(time/60000)*60;
+  const latest=last(m1);
+  if(latest && minuteBucket>=latest.time){
+   if(minuteBucket>latest.time){
+    const fresh={time:minuteBucket,open:price,high:price,low:price,close:price,volume:Number(raw.size)||0};
+    m1.push(fresh);if(m1.length>300)m1.shift();
+   }else{
+    latest.high=Math.max(latest.high,price);latest.low=Math.min(latest.low,price);
+    latest.close=price;latest.volume+=Number(raw.size)||0;
+   }
+   candle.update(last(m1));
+   const closes=m1.map(x=>x.close);
+   for(const [series,n] of [[ema9,9],[ema21,21],[ema34,34]]){
+    series.update({time:last(m1).time,value:last(ema(closes,n))});
+   }
+  }
+ }
  if(tenMode){
   candle.update(current);
   for(const [series,n] of [[ema9,9],[ema21,21],[ema34,34]]){
