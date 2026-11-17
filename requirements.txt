@@ -1,4 +1,2 @@
-streamlit>=1.37,<2
-pandas>=2.1
-plotly>=5.20
+streamlit>=1.37
 requests>=2.31

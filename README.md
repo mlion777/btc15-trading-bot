@@ -1,11 +1,13 @@
-# BTC15 V18 — chart-only research terminal
+# BTC15 V20: live browser chart and browser-persistent paper simulation
 
-Install `app.py`, `strategy.py`, `paper.py`, and `requirements.txt` in the repository root. Do not overwrite your existing bot without backing it up. Streamlit Community Cloud entrypoint: `app.py`.
+## What changed from V19
+- Fixed first-live-candle conflict with historical 1-minute candles (clear old series before 10-second updates).
+- Live 10-second candle updates directly from Coinbase WebSocket; no Streamlit page reload.
+- 10-second EMAs are updated with each trade; 1-minute history is initial context only.
+- Rolling 10/30-second and 1/5/15-minute confluence votes; requires adequate completed bars. Short timeframes warm up over time.
+- Browser-local completed paper-trade history persists across refreshes, with a reset button. Open positions do NOT persist, so browser refreshes while a trade is open invalidate that trade. No 24/7 execution.
+- Stale-feed age display and automatic reconnect.
+- Technical A/B/C grades shown on chart; they are NOT win probabilities.
 
-- One chart only. Coinbase 1-minute candlesticks, EMA 9/21/34, causal FVG rectangles, actual recorded paper LONG/SHORT and EXIT markers.
-- Collects public Coinbase recent trades and retains them in a local SQLite cache to reconstruct 1/5/10/15/30-second bars. Builds 1/2/3/5/15-minute bars from Coinbase 1-minute candles. **Subminute history requires warm-up and can be incomplete.** These are technical timeframes; not all have sufficient history immediately.
-- Uses 1m trend, 5m non-conflict and subminute confirmation; only opens paper positions when sufficient data is available and latest trade is fresh. Signals are independent research heuristics, not Bucko's proprietary code or validated win probabilities.
-- Automatic **BTC spot-price paper P&L**, not Polymarket UP/DOWN contract trading. $10 illustrative exposure per trade, assumed 8 bps fee and 3 bps slippage per side, +0.8% net profit exit, -0.55% net stop, 4m max hold. Short is simulated only, not an actual margin position.
-- Simulated trades saved in `paper_trades.sqlite3`; tick cache in `ticks.sqlite3`. On Streamlit Community Cloud local storage is **ephemeral** and may reset on redeploy/restart. The 5-second refresh runs only while app session is active. No unattended 24/7 trading guarantee.
-- Important: Coinbase's public REST endpoint may throttle or return sparse tick history. Never extrapolate subminute candles from minute bars. If data is insufficient, WAIT is correct.
-- No real orders, exchange keys, or live trading. No claimed profit performance. Does not reproduce TradingView or Bucko code 1:1.
+## Important limitations
+This is NOT a production trading system. This does NOT connect to Polymarket, simulate real contract bid/ask fills, or place real orders. It uses Coinbase BTC spot directional P&L and an assumed friction rate, so reported returns are NOT Polymarket P&L. Browser localStorage is not a durable multi-device ledger. Zone rendering is price-line boundaries rather than filled rectangles. The exact Bucko proprietary indicator is unavailable. Subminute history only builds from received trades; there is no complete tick backfill. Live connection depends on Coinbase WebSocket and external chart CDN, and has NOT been verified on the user's deployed Streamlit app. No profit guarantee. Install as a separate test app/branch.

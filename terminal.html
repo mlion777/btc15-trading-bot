@@ -1,0 +1,83 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script><style>*{box-sizing:border-box}body{margin:0;background:#070b0e;color:#d6e1e5;font:13px system-ui,Arial}#bar{display:flex;align-items:center;gap:13px;padding:10px 14px;border-bottom:1px solid #223137;flex-wrap:wrap}#bar b{font-size:17px}#status{color:#f8b963}#price{font-size:17px;font-weight:700}.chip{border:1px solid #34434a;padding:5px 8px;border-radius:4px;background:#111b20}.up{color:#35e0a2}.down{color:#ff627b}.muted{color:#a1b0b7}#chart{height:800px;width:100%}#foot{padding:8px 15px;color:#9baab1;display:flex;gap:14px;flex-wrap:wrap}#foot strong{color:#dbe7ec}#error{color:#ff7c8f}button{background:#17242a;border:1px solid #35484f;color:#dbe7ec;padding:5px 10px;cursor:pointer;border-radius:4px}button.active{background:#285a53}#signal{font-weight:700}</style></head><body>
+<div id="bar"><b>BTC / USD</b><span id="price">—</span><span id="status">CONNECTING</span><span class="chip" id="clock">15M —</span><span class="chip" id="signal">WAIT</span><span class="chip" id="grade">Grade —</span><span class="chip" id="paper">PAPER: WAIT</span><button id="pause">Pause paper</button><span class="muted" id="feedage">10-second live candles · Coinbase trades</span><button id="reset" title="Clear local simulated trade history">Reset paper</button></div>
+<div id="chart"></div><div id="foot"><span id="confluence">Collecting 10-second bars…</span><span id="performance">Paper trades: 0</span><span id="error"></span></div>
+<script>
+'use strict';
+const historical=__HISTORY__;
+const $=id=>document.getElementById(id);
+if(!window.LightweightCharts){$('error').textContent='Chart library blocked. Check browser extensions or network.';throw Error('Chart library unavailable')}
+const chart=LightweightCharts.createChart($('chart'),{width:innerWidth,height:800,layout:{background:{color:'#070b0e'},textColor:'#a6b8c0'},grid:{vertLines:{color:'#162126'},horzLines:{color:'#162126'}},rightPriceScale:{borderColor:'#26373d'},timeScale:{borderColor:'#26373d',timeVisible:true,secondsVisible:true,rightOffset:8},crosshair:{mode:LightweightCharts.CrosshairMode.Normal}});
+const candle=chart.addCandlestickSeries({upColor:'#18cf91',downColor:'#ff526d',borderVisible:false,wickUpColor:'#18cf91',wickDownColor:'#ff526d'});
+const ema9=chart.addLineSeries({color:'#50c2df',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
+const ema21=chart.addLineSeries({color:'#bb95ef',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
+const ema34=chart.addLineSeries({color:'#e8a646',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
+const m1=historical.filter(x=>x.time>0), ten=[];let current=null,ws=null,lastTrade=0,lastSeen=0,lastDecision=0,paused=false,position=null,trades=[],signals=[],zones=[],zoneLines=[];
+const last=a=>a[a.length-1];
+const STORE='btc15_v20_paper_ledger';
+function readLedger(){try{const a=JSON.parse(localStorage.getItem(STORE)||'[]');return Array.isArray(a)?a.filter(x=>Number.isFinite(x.pnl)):[]}catch(_){return []}}
+trades=readLedger();
+function saveLedger(){try{localStorage.setItem(STORE,JSON.stringify(trades.slice(-1000)))}catch(_){}}
+// Timeframe series aggregate only observed trades; incomplete bars are excluded from votes.
+function resample(arr,seconds){const out=[];for(const x of arr){const t=Math.floor(x.time/seconds)*seconds;const y=last(out);if(y&&y.time===t){y.high=Math.max(y.high,x.high);y.low=Math.min(y.low,x.low);y.close=x.close;y.volume+=x.volume||0}else out.push({...x,time:t})}return out}
+function timeframeVotes(){const tf=[10,30,60,300,900];let bulls=0,bears=0,available=0,detail=[];
+ for(const sec of tf){const base=sec>=60?resample([...m1.filter(x=>x.time<Math.floor(Date.now()/60000)*60),...resample(ten.filter(x=>x.time<Math.floor(Date.now()/10000)*10),60)],sec):resample(ten.filter(x=>x.time<Math.floor(Date.now()/10000)*10),sec);
+ const completed=base.filter(x=>x.time+sec<=Math.floor(Date.now()/1000));if(completed.length<8){detail.push(sec+'s warming');continue}
+ const closes=completed.map(x=>x.close),a=last(ema(closes,5)),b=last(ema(closes,8));available++;if(a>b&&last(closes)>closes[closes.length-4]){bulls++;detail.push(sec+'s UP')}else if(a<b&&last(closes)<closes[closes.length-4]){bears++;detail.push(sec+'s DOWN')}else detail.push(sec+'s mixed');}
+ return {bulls,bears,available,detail};}
+
+function ema(values,n){let k=2/(n+1),a=values[0],out=[];for(const x of values){a=x*k+a*(1-k);out.push(a)}return out}
+function paintLines(){const c=m1.map(x=>x.close);for(const [series,n] of [[ema9,9],[ema21,21],[ema34,34]]){const e=ema(c,n);series.setData(m1.map((x,i)=>({time:x.time,value:e[i]})))}}
+// Historical 1m data establishes context. 10s bars are built only from real WebSocket trades.
+function paint(){const data=ten.length?ten.slice(-900):m1.slice(-180);candle.setData(data);paintLinesIfNeeded();renderZones();candle.setMarkers(signals.filter(s=>s.time>=data[0].time).slice(-100));}
+let lastLineMinute=0;
+function paintLinesIfNeeded(){if(ten.length){ // overlay minute EMAs as horizontal context lines rather than mismatched timestamps
+ const c=m1.map(x=>x.close);const vals=[ema(c,9),ema(c,21),ema(c,34)];for(const [i,s] of [ema9,ema21,ema34].entries()){const v=last(vals[i]);s.setData([{time:ten[0].time,value:v},{time:last(ten).time,value:v}])}}
+ else paintLines()}
+function addZone(lo,hi,side,t){if(!Number.isFinite(lo)||!Number.isFinite(hi)||lo>=hi)return;zones.push({lo,hi,side,t});zones=zones.slice(-12)}
+function renderZones(){// Lightweight Charts v4 price lines: transparent zone boundaries; labels anchored to price scale.
+ for(const l of zoneLines)candle.removePriceLine(l);zoneLines=[];
+ for(const z of zones.slice(-6)){zoneLines.push(candle.createPriceLine({price:z.hi,color:z.side==='UP'?'rgba(32,182,129,.55)':'rgba(242,83,115,.55)',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:z.side==='UP'?'DEMAND':'SUPPLY'}));zoneLines.push(candle.createPriceLine({price:z.lo,color:z.side==='UP'?'rgba(32,182,129,.3)':'rgba(242,83,115,.3)',lineWidth:1,lineStyle:2,axisLabelVisible:false}))}
+}
+// Generate zones only after a completed 10s candle, using past data only.
+function detectZone(){if(ten.length<5)return;const a=ten[ten.length-4],b=ten[ten.length-3],c=ten[ten.length-2];if(c.low>a.high)addZone(a.high,c.low,'UP',c.time);if(c.high<a.low)addZone(c.high,a.low,'DOWN',c.time)}
+function momentum(arr,n){if(arr.length<n+1)return null;const a=arr.slice(-n-1);return (last(a).close-a[0].close)/a[0].close}
+function score(){const closed=ten.slice(0,-1), recent=closed.slice(-9);if(closed.length<12||m1.length<40)return {side:'WAIT',grade:'—',reason:'Warming up 10s history',points:0};const m=m1.slice(0,-1),e9=last(ema(m.map(x=>x.close),9)),e21=last(ema(m.map(x=>x.close),21)),e34=last(ema(m.map(x=>x.close),34));const x=last(closed),up=recent.filter(y=>y.close>y.open).length,down=recent.filter(y=>y.close<y.open).length,move=momentum(closed,6),long=[],short=[];
+ if(e9>e21&&e21>e34)long.push('1m EMA trend');if(e9<e21&&e21<e34)short.push('1m EMA trend');
+ if(move>0.00015)long.push('10s momentum');if(move< -0.00015)short.push('10s momentum');
+ if(up>=6)long.push('green candle majority');if(down>=6)short.push('red candle majority');
+ const prev=closed.slice(-10,-1);if(x.close>Math.max(...prev.map(y=>y.high)))long.push('10s breakout');if(x.close<Math.min(...prev.map(y=>y.low)))short.push('10s breakdown');
+ const m5=m.slice(-5);if(m5.length===5&&last(m5).close>m5[0].open)long.push('5m direction');if(m5.length===5&&last(m5).close<m5[0].open)short.push('5m direction');
+ if(x.close>x.open&&x.close>e9)long.push('price above fast EMA');if(x.close<x.open&&x.close<e9)short.push('price below fast EMA');
+ const tf=timeframeVotes();
+ if(tf.available>=2){if(tf.bulls>=2)long.push('multi-TF '+tf.bulls+'/'+tf.available);if(tf.bears>=2)short.push('multi-TF '+tf.bears+'/'+tf.available)}
+ const side=long.length>short.length?'UP':short.length>long.length?'DOWN':'WAIT',points=Math.max(long.length,short.length),margin=Math.abs(long.length-short.length);
+ const grade=points>=5&&margin>=3&&tf.available>=2?'A':points>=4&&margin>=2?'B':points>=3&&margin>=1?'C':'—';
+ return {side,grade,points,reason:((side==='UP'?long:side==='DOWN'?short:[]).join(' + ')||'Mixed conditions')+' | '+tf.detail.join(', ')}
+}
+function mark(time,side,text){signals.push({time,position:side==='UP'?'belowBar':'aboveBar',color:side==='UP'?'#b6ff52':'#ff5478',shape:side==='UP'?'arrowUp':'arrowDown',text});signals=signals.slice(-120);candle.setMarkers(signals)}
+function decision(){const s=score();$('signal').textContent=s.side==='UP'?'▲ LONG WATCH':s.side==='DOWN'?'▼ SHORT WATCH':'WAIT';$('signal').className='chip '+(s.side==='UP'?'up':s.side==='DOWN'?'down':'');$('grade').textContent='Grade '+s.grade+' · '+s.points+'/6';$('confluence').textContent=s.reason;
+ const price=last(ten)?.close;if(!price||Date.now()-lastSeen>12000){$('paper').textContent='PAPER: STALE FEED';return}
+ const now=Date.now();if(position){const direction=position.side==='UP'?1:-1,returnPct=(price-position.entry)/position.entry*direction,age=(now-position.at)/1000;
+ // BTC directional simulation only: explicit round-trip friction, never Polymarket P&L.
+ const net=returnPct-0.001;const flip=s.side!=='WAIT'&&s.side!==position.side&&s.grade!=='—';
+ if((age>=20&&net>=0.002)||(age>=20&&net<=-0.003)||(age>=120)||flip){const reason=net>=0.002?'TARGET':net<=-0.003?'STOP':flip?'SIGNAL FLIP':'TIME';const pnl=position.stake*net;trades.push({side:position.side,pnl,reason,entry:position.entry,exit:price,at:new Date().toISOString(),grade:position.grade});saveLedger();mark(last(ten).time,position.side==='UP'?'DOWN':'UP','EXIT '+pnl.toFixed(2));position=null}
+ }
+ if(!position&&!paused&&s.side!=='WAIT'&&['A','B'].includes(s.grade)&&now-lastDecision>60000){position={side:s.side,entry:price,at:now,stake:10,grade:s.grade};lastDecision=now;mark(last(ten).time,s.side,(s.side==='UP'?'LONG':'SHORT')+' '+s.grade)}
+ $('paper').textContent=paused?'PAPER PAUSED':position?'PAPER '+position.side+' $10 @ '+position.entry.toFixed(2):'PAPER: WAIT';const total=trades.reduce((a,x)=>a+x.pnl,0);$('performance').textContent='BTC-only simulated trades: '+trades.length+' · Net P&L $'+total.toFixed(2)+' (assumed 0.10% friction) · stored in this browser';
+}
+function onTrade(raw){const price=Number(raw.price),time=Date.parse(raw.time);if(!Number.isFinite(price)||!Number.isFinite(time)||time<=lastTrade)return;lastTrade=time;lastSeen=Date.now();$('price').textContent='$'+price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});const bucket=Math.floor(time/10000)*10;
+ if(!current||bucket>current.time){if(!current){candle.setData([]);ema9.setData([]);ema21.setData([]);ema34.setData([]);}if(current){detectZone();decision()}current={time:bucket,open:price,high:price,low:price,close:price,volume:Number(raw.size)||0};ten.push(current);if(ten.length>900)ten.shift();}
+ else if(bucket===current.time){current.high=Math.max(current.high,price);current.low=Math.min(current.low,price);current.close=price;current.volume+=Number(raw.size)||0}else return;
+ candle.update(current);if(ten.length>1){for(const [series,n] of [[ema9,9],[ema21,21],[ema34,34]]){const vals=ema(ten.map(x=>x.close),n);series.update({time:current.time,value:last(vals)})}}if(ten.length===1)chart.timeScale().fitContent();$('status').textContent='● LIVE';$('status').className='up';
+}
+function connect(){if(ws){try{ws.close()}catch(_){}}$('status').textContent='CONNECTING';ws=new WebSocket('wss://ws-feed.exchange.coinbase.com');ws.onopen=()=>{ws.send(JSON.stringify({type:'subscribe',product_ids:['BTC-USD'],channels:['matches']}))};ws.onmessage=e=>{try{const x=JSON.parse(e.data);if(x.type==='match'||x.type==='last_match')onTrade(x)}catch(err){$('error').textContent='Data parse issue: '+err.message}};ws.onerror=()=>{$('status').textContent='FEED ERROR';$('status').className='down'};ws.onclose=()=>{$('status').textContent='RECONNECTING';$('status').className='muted';setTimeout(connect,1800)}}
+$('reset').onclick=()=>{if(confirm('Erase browser-local paper trade history?')){trades=[];saveLedger();$('performance').textContent='Paper trades: 0'}};
+$('pause').onclick=()=>{paused=!paused;$('pause').textContent=paused?'Resume paper':'Pause paper'};
+window.addEventListener('resize',()=>chart.applyOptions({width:innerWidth,height:Math.max(580,innerHeight-90)}));chart.applyOptions({height:Math.max(580,innerHeight-90)});
+setInterval(()=>{const now=Math.floor(Date.now()/1000),rem=900-now%900;$('clock').textContent='15M '+String(Math.floor(rem/60)).padStart(2,'0')+':'+String(rem%60).padStart(2,'0');$('feedage').textContent=lastSeen?'Last trade '+Math.round((Date.now()-lastSeen)/1000)+'s ago · 10s live':'Waiting for first trade';if(Date.now()-lastSeen>12000&&lastSeen){$('status').textContent='STALE / RECONNECTING';$('status').className='down';if(ws?.readyState===WebSocket.OPEN)connect()}},1000);
+// Show 1m context immediately; trade-derived 10s bars replace it after connection.
+candle.setData(m1);paintLines();chart.timeScale().fitContent();connect();
+// Regular decision updates ensure existing positions are evaluated even without a new bucket.
+setInterval(()=>{if(ten.length>12&&Date.now()-lastSeen<12000)decision()},2000);
+
+</script></body></html>
