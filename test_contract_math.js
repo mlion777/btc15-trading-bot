@@ -1,0 +1,16 @@
+const assert=require('assert');
+const fs=require('fs'),vm=require('vm');
+const src=fs.readFileSync(__dirname+'/terminal.html','utf8');
+const script=src.match(/<script>([\s\S]*?)<\/script>/)[1];
+const fn=script.match(/function contractPnl\(p,bid\)\{[^}]+\}/)[0];
+const price=script.match(/function validPrice\(x\)\{[^}]+\}/)[0];
+const book=script.match(/function validBook\(asks,bids\)\{[^}]+\}/)[0];
+const ctx={};vm.createContext(ctx);vm.runInContext('const PAPER_FEE=0.01;'+fn+price+book+';this.test={contractPnl,validPrice,validBook}',ctx);
+const {contractPnl,validPrice,validBook}=ctx.test;
+assert(Math.abs(contractPnl({entry:.5,stake:10},.6)-1.78)<1e-9);
+assert(contractPnl({entry:.6,stake:10},.55)<0);
+assert(contractPnl({entry:.6,stake:10},.6)<0);
+assert(validPrice(.5)&&!validPrice(1)&&!validPrice(NaN));
+assert(validBook({UP:.5,DOWN:.52},{UP:.48,DOWN:.5}));
+assert(!validBook({UP:.5,DOWN:.52},{UP:.55,DOWN:.5}));
+console.log('6 contract-price checks passed');

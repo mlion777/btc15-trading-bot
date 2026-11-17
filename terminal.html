@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script><style>*{box-sizing:border-box}body{margin:0;background:#070b0e;color:#d6e1e5;font:13px system-ui,Arial}#bar{display:flex;align-items:center;gap:13px;padding:10px 14px;border-bottom:1px solid #223137;flex-wrap:wrap}#bar b{font-size:17px}#status{color:#f8b963}#price{font-size:17px;font-weight:700}.chip{border:1px solid #34434a;padding:5px 8px;border-radius:4px;background:#111b20}.up{color:#35e0a2}.down{color:#ff627b}.muted{color:#a1b0b7}#chart{height:800px;width:100%}#foot{padding:8px 15px;color:#9baab1;display:flex;gap:14px;flex-wrap:wrap}#foot strong{color:#dbe7ec}#error{color:#ff7c8f}button{background:#17242a;border:1px solid #35484f;color:#dbe7ec;padding:5px 10px;cursor:pointer;border-radius:4px}button.active{background:#285a53}#signal{font-weight:700}</style></head><body>
-<div id="bar"><b>BTC / USD</b><span id="price">—</span><span id="status">CONNECTING</span><span class="chip" id="clock">15M —</span><span class="chip" id="signal">WAIT</span><span class="chip" id="grade">Grade —</span><span class="chip" id="paper">PAPER: WAIT</span><span class="chip" id="plan">ENTRY — · TARGET — · STOP —</span><span class="chip muted" id="venues">POLY/KALSHI: CHECKING</span><button id="pause">Pause paper</button><span class="muted" id="feedage">10-second live candles · Coinbase trades</span><button id="reset" title="Clear local simulated trade history">Reset paper</button></div>
+<div id="bar"><b>BTC / USD</b><span id="price">—</span><span id="status">CONNECTING</span><span class="chip" id="clock">15M —</span><span class="chip" id="signal">WAIT</span><span class="chip" id="grade">Grade —</span><span class="chip" id="paper">CONTRACT PAPER: WAIT</span><span class="chip" id="plan">CONTRACT ENTRY — · TARGET — · STOP —</span><span class="chip muted" id="venues">POLY/KALSHI: CHECKING</span><button id="pause">Pause paper</button><span class="muted" id="feedage">10-second live candles · Coinbase trades</span><button id="reset" title="Clear local simulated trade history">Reset paper</button></div>
 <div id="chart"></div><div id="foot"><span id="confluence">Collecting 10-second bars…</span><span id="performance">Paper trades: 0</span><span id="lastExit">Last exit: —</span><span id="error"></span></div>
 <script>
 'use strict';
@@ -13,10 +13,10 @@ const ema21=chart.addLineSeries({color:'#bb95ef',lineWidth:1,priceLineVisible:fa
 const ema34=chart.addLineSeries({color:'#e8a646',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
 const m1=historical.filter(x=>x.time>0), ten=[];let current=null,ws=null,lastTrade=0,lastSeen=0,lastDecision=0,paused=false,position=null,trades=[],signals=[],zones=[],zoneLines=[];
 const last=a=>a[a.length-1];
-const STORE='btc15_v21_paper_ledger', OPEN_STORE='btc15_v21_open_position';
+const STORE='btc15_v25_contract_ledger', OPEN_STORE='btc15_v25_contract_open';
 function readLedger(){try{const a=JSON.parse(localStorage.getItem(STORE)||'[]');return Array.isArray(a)?a.filter(x=>Number.isFinite(x.pnl)):[]}catch(_){return []}}
 trades=readLedger();
-try {const saved=JSON.parse(localStorage.getItem(OPEN_STORE)||'null');if(saved&&Number.isFinite(saved.entry)&&Number.isFinite(saved.at)&&Date.now()-saved.at<900000){position=saved}}catch(_){}
+try {const saved=JSON.parse(localStorage.getItem(OPEN_STORE)||'null');if(saved&&saved.kind==='POLY_CONTRACT'&&Number.isFinite(saved.entry)&&Number.isFinite(saved.at)){position=saved}}catch(_){}
 function saveOpen(){try{if(position)localStorage.setItem(OPEN_STORE,JSON.stringify(position));else localStorage.removeItem(OPEN_STORE)}catch(_){}}
 
 function saveLedger(){try{localStorage.setItem(STORE,JSON.stringify(trades.slice(-1000)))}catch(_){}}
@@ -58,58 +58,100 @@ function score(){const closed=ten.slice(0,-1), recent=closed.slice(-9);if(closed
  return {side,grade,points,reason:((side==='UP'?long:side==='DOWN'?short:[]).join(' + ')||'Mixed conditions')+' | '+tf.detail.join(', ')}
 }
 function mark(time,side,text){signals.push({time,position:side==='UP'?'belowBar':'aboveBar',color:side==='UP'?'#b6ff52':'#ff5478',shape:side==='UP'?'arrowUp':'arrowDown',text});signals=signals.slice(-120);candle.setMarkers(signals)}
-function decision(){const s=score();$('signal').textContent=s.side==='UP'?'▲ LONG WATCH':s.side==='DOWN'?'▼ SHORT WATCH':'WAIT';$('signal').className='chip '+(s.side==='UP'?'up':s.side==='DOWN'?'down':'');$('grade').textContent='Grade '+s.grade+' · '+s.points+'/6';$('confluence').textContent=s.reason;
- const price=last(ten)?.close;if(!price||Date.now()-lastSeen>12000){$('paper').textContent='PAPER: STALE FEED';return}
- const now=Date.now();if(position){const direction=position.side==='UP'?1:-1,returnPct=(price-position.entry)/position.entry*direction,age=(now-position.at)/1000;
- // BTC directional simulation only: explicit round-trip friction, never Polymarket P&L.
- const net=returnPct-0.001;const flip=s.side!=='WAIT'&&s.side!==position.side&&s.grade!=='—';
- if((age>=20&&net>=0.002)||(age>=20&&net<=-0.003)||(age>=120)||flip){const reason=net>=0.002?'TARGET':net<=-0.003?'STOP':flip?'SIGNAL FLIP':'TIME';const pnl=position.stake*net;trades.push({side:position.side,pnl,reason,entry:position.entry,exit:price,at:new Date().toISOString(),grade:position.grade,stake:position.stake,seconds:Math.round(age)});saveLedger();
- $('lastExit').textContent='SELL '+position.side+' @ $'+price.toFixed(2)+' · '+reason+' · P&L $'+pnl.toFixed(2);
- mark(last(ten).time,position.side==='UP'?'DOWN':'UP','SELL '+reason+' $'+pnl.toFixed(2));position=null;saveOpen()}
+// Explicit contract paper model: BUY at observed CLOB ask; SELL at observed CLOB bid.
+// A 1% per-side fee is a conservative ILLUSTRATIVE assumption, not an exchange fee quote.
+const PAPER_FEE=0.01, PAPER_STAKE=10, MAX_SPREAD=0.08, TARGET_RETURN=0.12, STOP_RETURN=-0.15;
+function contractPnl(p,bid){const shares=p.stake/p.entry;return shares*(bid-p.entry)-p.stake*PAPER_FEE-shares*bid*PAPER_FEE}
+function contractReturn(p,bid){return contractPnl(p,bid)/p.stake}
+function matchingQuote(p){const q=venueState.poly;return q&&q.slot===p.slot&&q.marketId===p.marketId&&q.tokenIds?.[p.side]===p.token&&Date.now()-q.at<25000&&validPrice(q.bids?.[p.side])?q:null}
+function closePaper(p,bid,reason){const pnl=contractPnl(p,bid),stamp=last(ten)?.time||Math.floor(Date.now()/10e3)*10;
+ trades.push({kind:'POLY_CONTRACT',venue:'Polymarket',side:p.side,pnl,reason,entry:p.entry,exit:bid,at:new Date().toISOString(),grade:p.grade,stake:p.stake,marketId:p.marketId,token:p.token,seconds:Math.round((Date.now()-p.at)/1000)});
+ saveLedger();$('lastExit').textContent='SELL '+p.side+' @ '+Math.round(bid*100)+'¢ · '+reason+' · PAPER P&L $'+pnl.toFixed(2);
+ mark(stamp,p.side==='UP'?'DOWN':'UP','SELL '+p.side+' '+Math.round(bid*100)+'¢ $'+pnl.toFixed(2));position=null;saveOpen();lastDecision=Date.now();}
+function decision(){const s=score(),validGrade=['A','B'].includes(s.grade),gate=validGrade?entryGate(s.side):{ok:false,why:'NO A/B SETUP'};
+ $('signal').textContent=!validGrade?'WAIT · A/B ONLY':s.side==='UP'?'▲ LONG WATCH':s.side==='DOWN'?'▼ SHORT WATCH':'WAIT';
+ $('signal').className='chip '+(validGrade&&s.side==='UP'?'up':validGrade&&s.side==='DOWN'?'down':'');
+ $('grade').textContent=validGrade?'Grade '+s.grade+' · '+s.points+'/7':'Grade — · A/B only';
+ $('confluence').textContent=s.reason+' · '+gate.why;
+ const now=Date.now();if(position){const q=matchingQuote(position),age=(now-position.at)/1000,remaining=remainingSeconds();
+  if(q){const bid=q.bids[position.side],ret=contractReturn(position,bid);
+   // Emergency exit may act immediately. Ordinary stop has 20s grace, no stop based on BTC spot price.
+   const emergency=ret<=-0.35,flip=validGrade&&s.side!==position.side&&age>=20;
+   if(emergency||(age>=20&&(ret>=TARGET_RETURN||ret<=STOP_RETURN))||age>=240||remaining<=30||flip){
+    const reason=emergency?'EMERGENCY':ret>=TARGET_RETURN?'TARGET':ret<=STOP_RETURN?'STOP':remaining<=30?'EXPIRY APPROACHING':flip?'SIGNAL FLIP':'TIME';closePaper(position,bid,reason)}
+  }else if(now>position.slot*1000+900000){
+   // Settlement must be independently verified. Never invent a $1 payout or a closing bid.
+   $('paper').textContent='PAPER UNRESOLVED · VENUE QUOTE MISSING';
+  }
  }
- if(!position&&!paused&&s.side!=='WAIT'&&['A','B'].includes(s.grade)&&now-lastDecision>60000){position={side:s.side,entry:price,at:now,stake:10,grade:s.grade,
- target:price*(s.side==='UP'?1.003:0.997),stop:price*(s.side==='UP'?0.996:1.004),why:s.reason};
- saveOpen();lastDecision=now;mark(last(ten).time,s.side,'BUY '+s.side+' '+s.grade+' $10')}
- $('plan').textContent=position?'ENTRY $'+position.entry.toFixed(2)+' · TARGET $'+position.target.toFixed(2)+' · STOP $'+position.stop.toFixed(2):'ENTRY — · TARGET — · STOP —';
- $('plan').title=position?'Paper plan: '+position.why+'; exits use simulated net P&L and time/flip rules. Targets are illustrative BTC levels.':'No open paper position';
- $('paper').textContent=paused?'PAPER PAUSED':position?'PAPER '+position.side+' $10 @ '+position.entry.toFixed(2):'PAPER: WAIT';const total=trades.reduce((a,x)=>a+x.pnl,0);$('performance').textContent='BTC-only simulated trades: '+trades.length+' · Net P&L $'+total.toFixed(2)+' (assumed 0.10% friction) · stored in this browser';
+ if(!position&&!paused&&gate.ok&&validGrade&&now-lastDecision>60000){const q=gate.quote,ask=q.asks[s.side];
+  position={kind:'POLY_CONTRACT',venue:'Polymarket',side:s.side,entry:ask,at:now,stake:PAPER_STAKE,grade:s.grade,slot:q.slot,marketId:q.marketId,token:q.tokenIds[s.side],why:s.reason};
+  saveOpen();lastDecision=now;mark(last(ten).time,s.side,'PAPER BUY '+s.side+' '+Math.round(ask*100)+'¢ '+s.grade);
+ }
+ $('plan').textContent=position?'POLY '+position.side+' BUY '+Math.round(position.entry*100)+'¢ · TARGET +12% · STOP −15%':'CONTRACT ENTRY — · TARGET +12% · STOP −15%';
+ $('plan').title=position?'Actual paper exits use fresh matching Polymarket SELL bids; assumed 1% fee on entry and exit. '+position.why:'No contract paper position';
+ const live=position?matchingQuote(position):null;
+ $('paper').textContent=paused?'PAPER PAUSED':position?'PAPER '+position.side+' $'+position.stake+' @ '+Math.round(position.entry*100)+'¢'+(live?' · SELL BID '+Math.round(live.bids[position.side]*100)+'¢':' · EXIT QUOTE STALE'):'PAPER: '+gate.why;
+ const total=trades.reduce((a,x)=>a+x.pnl,0);
+ $('performance').textContent='Polymarket contract paper: '+trades.length+' closed · Net $'+total.toFixed(2)+' · 1% illustrative fee each side · browser-local';
 }
 
-// Public market context is read-only. Never use spot BTC prices as binary-contract fills.
-// Browser CORS, market naming and API availability can prevent reliable comparisons.
-let venueState={poly:null,kalshi:null,checked:0};
-async function getJson(url){const c=new AbortController();const t=setTimeout(()=>c.abort(),4000);try{const r=await fetch(url,{signal:c.signal,cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);return await r.json()}finally{clearTimeout(t)}}
+// Strict 15-minute venue guard. This is a PAPER BTC direction strategy,
+// NOT a binary-contract execution simulator. Contract asks are only a gate.
+// Unavailable, stale, ambiguous or expensive markets BLOCK new paper entries.
+let venueState={poly:null,kalshi:null,checked:0,slot:0};
+const VENUE_MAX_AGE=25000, MIN_REMAIN=180, MAX_REMAIN=720, MAX_ASK=0.80, MIN_ASK=0.12;
+function remainingSeconds(){return 900-Math.floor(Date.now()/1000)%900}
+function parseArray(x){try{return Array.isArray(x)?x:JSON.parse(x)}catch(_){return []}}
+async function getJson(url){const c=new AbortController();const t=setTimeout(()=>c.abort(),4500);try{const r=await fetch(url,{signal:c.signal,cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);return await r.json()}finally{clearTimeout(t)}}
+function validPrice(x){return typeof x==='number'&&Number.isFinite(x)&&x>0&&x<1}
+function validBook(asks,bids){return ['UP','DOWN'].every(k=>validPrice(asks[k])&&validPrice(bids[k])&&bids[k]<=asks[k]&&asks[k]-bids[k]<=0.30)}
 async function checkVenues(){
- const slot=Math.floor(Date.now()/900000)*900;
- let poly='UNAVAILABLE',kalshi='UNAVAILABLE';
+ const slot=Math.floor(Date.now()/900000)*900,next={poly:null,kalshi:null,checked:Date.now(),slot};
  try{
-  const slug='btc-updown-15m-'+slot;
-  const events=await getJson('https://gamma-api.polymarket.com/events?slug='+encodeURIComponent(slug));
-  const event=Array.isArray(events)?events[0]:null;
-  const m=event?.markets?.find(x=>!x.closed);
-  if(m){
-   const raw=typeof m.outcomePrices==='string'?JSON.parse(m.outcomePrices):m.outcomePrices;
-   const outcomes=typeof m.outcomes==='string'?JSON.parse(m.outcomes):m.outcomes;
-   const idx=outcomes?.findIndex(x=>String(x).toLowerCase()==='up');
-   const up=idx>=0?Number(raw[idx]):NaN;
-   if(Number.isFinite(up)&&up>=0&&up<=1)poly='UP indicative '+Math.round(up*100)+'¢ (not ask)';
+  const events=await getJson('https://gamma-api.polymarket.com/events?slug=btc-updown-15m-'+slot);
+  const e=Array.isArray(events)?events[0]:null;
+  const matches=e?.markets?.filter(x=>!x.closed&&!x.archived)||[];
+  if(matches.length===1){const m=matches[0],outcomes=parseArray(m.outcomes),tokens=parseArray(m.clobTokenIds||m.clob_token_ids);
+   const i=outcomes.findIndex(x=>String(x).toLowerCase()==='up'),j=outcomes.findIndex(x=>String(x).toLowerCase()==='down');
+   const end=Date.parse(m.endDate||m.end_date_iso||m.end_date||'');
+   if(i>=0&&j>=0&&tokens[i]&&tokens[j]&&Math.abs(end-(slot+900)*1000)<=60000){
+    const tokenIds={UP:String(tokens[i]),DOWN:String(tokens[j])},req=[];
+    for(const side of ['UP','DOWN'])for(const action of ['BUY','SELL'])req.push(getJson('https://clob.polymarket.com/price?token_id='+encodeURIComponent(tokenIds[side])+'&side='+action));
+    const r=await Promise.all(req),asks={UP:Number(r[0].price),DOWN:Number(r[2].price)},bids={UP:Number(r[1].price),DOWN:Number(r[3].price)};
+    if(validBook(asks,bids)&&asks.UP+asks.DOWN>=0.98&&asks.UP+asks.DOWN<=1.20)
+     next.poly={asks,bids,at:Date.now(),slot,marketId:String(m.id),tokenIds};
+   }
   }
- }catch(e){}
+ }catch(_){}
+ // Kalshi is displayed for context ONLY. Different strike/settlement definitions cannot be assumed equivalent.
  try{
-  const k=await getJson('https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXBTC15M&status=open&limit=20');
-  const markets=Array.isArray(k.markets)?k.markets:[];
-  const now=Date.now();
-  const active=markets.find(m=>{const end=Date.parse(m.close_time||'');return end>now&&end<=now+16*60000});
-  if(active){
-   const bid=Number(active.yes_bid_dollars),ask=Number(active.yes_ask_dollars);
-   kalshi=Number.isFinite(ask)&&ask>0&&ask<1?'YES ask '+Math.round(ask*100)+'¢':'MARKET FOUND (NO VALID ASK)';
+  const data=await getJson('https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXBTC15M&status=open&limit=100');
+  const matching=(data.markets||[]).filter(m=>Math.abs(Date.parse(m.close_time||'')-(slot+900)*1000)<=60000);
+  if(matching.length===1){const m=matching[0],yes=Number(m.yes_ask_dollars),no=Number(m.no_ask_dollars);
+   if(validPrice(yes)&&validPrice(no))next.kalshi={yes,no,ticker:m.ticker,at:Date.now()};
   }
- }catch(e){}
- venueState={poly,kalshi,checked:Date.now()};
- $('venues').textContent='POLY '+poly+' · KALSHI '+kalshi;
- $('venues').title='Read-only indicative venue data; not verified executable prices, strike equivalence, or settlement probabilities. Automatic paper trades are BTC-direction simulations only.';
+ }catch(_){}
+ venueState=next;
+ const p=next.poly,k=next.kalshi;
+ $('venues').textContent='POLY '+(p?'UP '+Math.round(p.asks.UP*100)+'¢ / DOWN '+Math.round(p.asks.DOWN*100)+'¢':'UNAVAILABLE')+' · KALSHI '+(k?'YES '+Math.round(k.yes*100)+'¢ / NO '+Math.round(k.no*100)+'¢ (CONTEXT)':'UNAVAILABLE');
+ $('venues').title='Polymarket matched contract CLOB BUY asks and SELL bids used for paper fills. Kalshi quotes are informational only; outcome equivalence not established. CORS/API issues fail closed.';
 }
-checkVenues();setInterval(checkVenues,15000);
+function entryGate(side){
+ const left=remainingSeconds(),slot=Math.floor(Date.now()/900000)*900;
+ if(left<MIN_REMAIN)return {ok:false,why:'TOO LATE · '+left+'s left'};
+ if(left>MAX_REMAIN)return {ok:false,why:'WAIT FOR OPENING PRICE DISCOVERY'};
+ const q=venueState.poly;
+ if(!q||q.slot!==slot||Date.now()-q.at>VENUE_MAX_AGE)return {ok:false,why:'POLYMARKET CONTRACT QUOTE UNAVAILABLE / STALE'};
+ if(!['UP','DOWN'].includes(side))return {ok:false,why:'NO DIRECTION'};
+ const ask=q.asks[side],bid=q.bids[side],spread=ask-bid;
+ if(ask>MAX_ASK)return {ok:false,why:side+' TOO EXPENSIVE '+Math.round(ask*100)+'¢'};
+ if(ask<MIN_ASK)return {ok:false,why:side+' OUTSIDE PRICE RANGE'};
+ if(spread>MAX_SPREAD)return {ok:false,why:'SPREAD TOO WIDE '+Math.round(spread*100)+'¢'};
+ // A $10 trade has limited upside at expensive asks. This is a price screen, not a calibrated edge.
+ return {ok:true,quote:q,why:'POLY BUY '+Math.round(ask*100)+'¢ / SELL '+Math.round(bid*100)+'¢ · '+left+'s remaining'};
+}
+checkVenues();setInterval(checkVenues,12000);
 
 function onTrade(raw){const price=Number(raw.price),time=Date.parse(raw.time);if(!Number.isFinite(price)||!Number.isFinite(time)||time<=lastTrade)return;lastTrade=time;lastSeen=Date.now();$('price').textContent='$'+price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});const bucket=Math.floor(time/10000)*10;
  if(!current||bucket>current.time){if(!current){candle.setData([]);ema9.setData([]);ema21.setData([]);ema34.setData([]);}if(current){detectZone();decision()}current={time:bucket,open:price,high:price,low:price,close:price,volume:Number(raw.size)||0};ten.push(current);if(ten.length>900)ten.shift();}
