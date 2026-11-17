@@ -1,0 +1,1 @@
+V30: V21 live chart retained; V29 A/B multi-timeframe signals retained. Entry stability 15 seconds, 45-second post-exit cooldown, multiple entries per 15m window allowed, only one open position at a time. Entry window 90–810 seconds remaining. Paper trades only. Replace terminal.html in GitHub.

@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script><style>*{box-sizing:border-box}body{margin:0;background:#070b0e;color:#d6e1e5;font:13px system-ui,Arial}#bar{display:flex;align-items:center;gap:13px;padding:10px 14px;border-bottom:1px solid #223137;flex-wrap:wrap}#bar b{font-size:17px}#status{color:#f8b963}#price{font-size:17px;font-weight:700}.chip{border:1px solid #34434a;padding:5px 8px;border-radius:4px;background:#111b20}.up{color:#35e0a2}.down{color:#ff627b}.muted{color:#a1b0b7}#chart{height:800px;width:100%}#foot{padding:8px 15px;color:#9baab1;display:flex;gap:14px;flex-wrap:wrap}#foot strong{color:#dbe7ec}#error{color:#ff7c8f}button{background:#17242a;border:1px solid #35484f;color:#dbe7ec;padding:5px 10px;cursor:pointer;border-radius:4px}button.active{background:#285a53}#signal{font-weight:700}</style></head><body>
-<div id="bar"><b>BTC / USD</b><span id="price">—</span><span id="status">CONNECTING</span><span class="chip" id="clock">15M —</span><span class="chip" id="signal">WAIT</span><span class="chip" id="grade">Grade —</span><span class="chip" id="paper">PAPER: WAIT</span><span class="chip" id="plan">ENTRY — · TARGET — · STOP —</span><span class="chip muted" id="venues">POLY/KALSHI: CHECKING</span><button id="pause">Pause paper</button><span class="muted" id="feedage">10-second live candles · Coinbase trades</span><button id="reset" title="Clear local simulated trade history">Reset paper</button></div>
+<div id="bar"><b>BTC / USD</b><span id="price">—</span><span id="status">CONNECTING</span><span class="chip" id="clock">15M —</span><span class="chip" id="signal">WAIT</span><span class="chip" id="grade">Grade —</span><span class="chip" id="paper">PAPER: WAIT</span><span class="chip" id="plan">ENTRY — · TARGET — · STOP —</span><span class="chip muted" id="venues">POLY/KALSHI: CHECKING</span><button id="pause">Pause paper</button><span class="muted" id="feedage">10-second live candles · 1–5m trend filter</span><button id="reset" title="Clear local simulated trade history">Reset paper</button></div>
 <div id="chart"></div><div id="foot"><span id="confluence">Collecting 10-second bars…</span><span id="performance">Paper trades: 0</span><span id="lastExit">Last exit: —</span><span id="error"></span></div>
 <script>
 'use strict';
@@ -13,7 +13,9 @@ const ema21=chart.addLineSeries({color:'#bb95ef',lineWidth:1,priceLineVisible:fa
 const ema34=chart.addLineSeries({color:'#e8a646',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
 const m1=historical.filter(x=>x.time>0), ten=[];let current=null,ws=null,lastTrade=0,lastSeen=0,lastDecision=0,paused=false,position=null,trades=[],signals=[],zones=[],zoneLines=[];
 const last=a=>a[a.length-1];
-const STORE='btc15_v21_paper_ledger', OPEN_STORE='btc15_v21_open_position';
+const STORE='btc15_v29_paper_ledger', OPEN_STORE='btc15_v29_open_position';
+let stableSide='WAIT',stableSince=0,stableGrade='—',lastEntryWindow=-1,lastTradeExit=0;
+try{lastEntryWindow=Number(localStorage.getItem('btc15_v29_last_window')||-1)}catch(_){}
 function readLedger(){try{const a=JSON.parse(localStorage.getItem(STORE)||'[]');return Array.isArray(a)?a.filter(x=>Number.isFinite(x.pnl)):[]}catch(_){return []}}
 trades=readLedger();
 try {const saved=JSON.parse(localStorage.getItem(OPEN_STORE)||'null');if(saved&&Number.isFinite(saved.entry)&&Number.isFinite(saved.at)&&Date.now()-saved.at<900000){position=saved}}catch(_){}
@@ -44,35 +46,78 @@ function renderZones(){// Lightweight Charts v4 price lines: transparent zone bo
 // Generate zones only after a completed 10s candle, using past data only.
 function detectZone(){if(ten.length<5)return;const a=ten[ten.length-4],b=ten[ten.length-3],c=ten[ten.length-2];if(c.low>a.high)addZone(a.high,c.low,'UP',c.time);if(c.high<a.low)addZone(c.high,a.low,'DOWN',c.time)}
 function momentum(arr,n){if(arr.length<n+1)return null;const a=arr.slice(-n-1);return (last(a).close-a[0].close)/a[0].close}
-function score(){const closed=ten.slice(0,-1), recent=closed.slice(-9);if(closed.length<12||m1.length<40)return {side:'WAIT',grade:'—',reason:'Warming up 10s history',points:0};const m=m1.slice(0,-1),e9=last(ema(m.map(x=>x.close),9)),e21=last(ema(m.map(x=>x.close),21)),e34=last(ema(m.map(x=>x.close),34));const x=last(closed),up=recent.filter(y=>y.close>y.open).length,down=recent.filter(y=>y.close<y.open).length,move=momentum(closed,6),long=[],short=[];
- if(e9>e21&&e21>e34)long.push('1m EMA trend');if(e9<e21&&e21<e34)short.push('1m EMA trend');
+function score(){
+ const closed=ten.slice(0,-1),m=m1.slice(0,-1);
+ if(closed.length<12||m.length<40)return {side:'WAIT',grade:'—',points:0,reason:'Collecting 10-second candles and 1-minute context'};
+ const x=last(closed),recent=closed.slice(-9),up=recent.filter(y=>y.close>y.open).length,down=recent.filter(y=>y.close<y.open).length;
+ const e9=last(ema(m.map(y=>y.close),9)),e21=last(ema(m.map(y=>y.close),21)),e34=last(ema(m.map(y=>y.close),34));
+ const one=e9>e21&&e21>e34?'UP':e9<e21&&e21<e34?'DOWN':'MIXED';
+ const five=m.length>=6?(last(m).close>m[m.length-6].close?'UP':last(m).close<m[m.length-6].close?'DOWN':'MIXED'):'MIXED';
+ const fifteen=m.length>=16?(last(m).close>m[m.length-16].close?'UP':last(m).close<m[m.length-16].close?'DOWN':'MIXED'):'MIXED';
+ const tf=timeframeVotes();const move=momentum(closed,6);
+ const long=[],short=[];
+ if(one==='UP')long.push('1m EMA trend');if(one==='DOWN')short.push('1m EMA trend');
+ if(five==='UP')long.push('5m direction');if(five==='DOWN')short.push('5m direction');
+ if(fifteen==='UP')long.push('15m context');if(fifteen==='DOWN')short.push('15m context');
  if(move>0.00015)long.push('10s momentum');if(move< -0.00015)short.push('10s momentum');
- if(up>=6)long.push('green candle majority');if(down>=6)short.push('red candle majority');
- const prev=closed.slice(-10,-1);if(x.close>Math.max(...prev.map(y=>y.high)))long.push('10s breakout');if(x.close<Math.min(...prev.map(y=>y.low)))short.push('10s breakdown');
- const m5=m.slice(-5);if(m5.length===5&&last(m5).close>m5[0].open)long.push('5m direction');if(m5.length===5&&last(m5).close<m5[0].open)short.push('5m direction');
- if(x.close>x.open&&x.close>e9)long.push('price above fast EMA');if(x.close<x.open&&x.close<e9)short.push('price below fast EMA');
- const tf=timeframeVotes();
- if(tf.available>=2){if(tf.bulls>=2)long.push('multi-TF '+tf.bulls+'/'+tf.available);if(tf.bears>=2)short.push('multi-TF '+tf.bears+'/'+tf.available)}
- const side=long.length>short.length?'UP':short.length>long.length?'DOWN':'WAIT',points=Math.max(long.length,short.length),margin=Math.abs(long.length-short.length);
- const grade=points>=5&&margin>=3&&tf.available>=2?'A':points>=4&&margin>=2?'B':points>=3&&margin>=1?'C':'—';
- return {side,grade,points,reason:((side==='UP'?long:side==='DOWN'?short:[]).join(' + ')||'Mixed conditions')+' | '+tf.detail.join(', ')}
+ if(up>=6)long.push('green candles');if(down>=6)short.push('red candles');
+ const prev=closed.slice(-10,-1);
+ if(x.close>Math.max(...prev.map(y=>y.high)))long.push('breakout');
+ if(x.close<Math.min(...prev.map(y=>y.low)))short.push('breakdown');
+ if(tf.available>=2&&tf.bulls>=2)long.push('multi-TF confirmation');
+ if(tf.available>=2&&tf.bears>=2)short.push('multi-TF confirmation');
+ const side=long.length>short.length?'UP':short.length>long.length?'DOWN':'WAIT';
+ const pts=Math.max(long.length,short.length),margin=Math.abs(long.length-short.length);
+ // Both major trends MUST agree; 15m is an extra requirement for A only.
+ const aligned=side!=='WAIT'&&side===one&&side===five;
+ const grade=aligned&&pts>=6&&margin>=3&&fifteen===side&&tf.available>=2?'A':aligned&&pts>=4&&margin>=2&&tf.available>=2?'B':'—';
+ return {side:grade==='—'?'WAIT':side,grade,points:pts,reason:'1m '+one+' · 5m '+five+' · 15m '+fifteen+' | '+(side==='UP'?long:short).join(' + ')};
 }
 function mark(time,side,text){signals.push({time,position:side==='UP'?'belowBar':'aboveBar',color:side==='UP'?'#b6ff52':'#ff5478',shape:side==='UP'?'arrowUp':'arrowDown',text});signals=signals.slice(-120);candle.setMarkers(signals)}
-function decision(){const s=score();$('signal').textContent=s.side==='UP'?'▲ LONG WATCH':s.side==='DOWN'?'▼ SHORT WATCH':'WAIT';$('signal').className='chip '+(s.side==='UP'?'up':s.side==='DOWN'?'down':'');$('grade').textContent='Grade '+s.grade+' · '+s.points+'/6';$('confluence').textContent=s.reason;
- const price=last(ten)?.close;if(!price||Date.now()-lastSeen>12000){$('paper').textContent='PAPER: STALE FEED';return}
- const now=Date.now();if(position){const direction=position.side==='UP'?1:-1,returnPct=(price-position.entry)/position.entry*direction,age=(now-position.at)/1000;
- // BTC directional simulation only: explicit round-trip friction, never Polymarket P&L.
- const net=returnPct-0.001;const flip=s.side!=='WAIT'&&s.side!==position.side&&s.grade!=='—';
- if((age>=20&&net>=0.002)||(age>=20&&net<=-0.003)||(age>=120)||flip){const reason=net>=0.002?'TARGET':net<=-0.003?'STOP':flip?'SIGNAL FLIP':'TIME';const pnl=position.stake*net;trades.push({side:position.side,pnl,reason,entry:position.entry,exit:price,at:new Date().toISOString(),grade:position.grade,stake:position.stake,seconds:Math.round(age)});saveLedger();
- $('lastExit').textContent='SELL '+position.side+' @ $'+price.toFixed(2)+' · '+reason+' · P&L $'+pnl.toFixed(2);
- mark(last(ten).time,position.side==='UP'?'DOWN':'UP','SELL '+reason+' $'+pnl.toFixed(2));position=null;saveOpen()}
+function decision(){
+ const s=score(),now=Date.now(),windowId=Math.floor(now/900000),secondsLeft=900-Math.floor(now/1000)%900;
+ const valid=['A','B'].includes(s.grade)&&s.side!=='WAIT';
+ if(!valid){stableSide='WAIT';stableSince=0;stableGrade='—'}
+ else if(stableSide!==s.side){stableSide=s.side;stableSince=now;stableGrade=s.grade}
+ else stableGrade=s.grade;
+ const stable=valid&&now-stableSince>=15000;
+ $('signal').textContent=valid?(s.side==='UP'?'▲ LONG':'▼ SHORT')+' '+(s.grade==='A'?'HOLD WATCH':'SCALP WATCH'):'WAIT · NO A/B SETUP';
+ $('signal').className='chip '+(valid?(s.side==='UP'?'up':'down'):'');
+ $('grade').textContent=valid?'Grade '+s.grade+' · '+s.points+' confirmations':'Grade — · A/B ONLY';
+ const entryAllowed=stable&&secondsLeft>=90&&secondsLeft<=810&&now-lastTradeExit>=45000;
+ const reason=!valid?'1m/5m trend or confluence insufficient':!stable?'Confirming stable '+s.side+' setup ('+Math.floor((now-stableSince)/1000)+'/40s)':secondsLeft<180?'Too late for a new entry':secondsLeft>720?'Waiting for opening volatility':now-lastTradeExit<45000?'Cooling down after exit':'Qualified '+s.grade+' setup';
+ $('confluence').textContent=reason+' · '+s.reason;
+ const price=last(ten)?.close;
+ if(!price||now-lastSeen>12000){$('paper').textContent='PAPER: STALE FEED';return}
+ if(position){
+   const age=(now-position.at)/1000,dir=position.side==='UP'?1:-1,net=(price-position.entry)/position.entry*dir-0.001;
+   // Never exit on a single opposite call. Time horizon is 1–5 minutes.
+   const take=age>=30&&net>=0.0035;
+   const stop=age>=30&&net<=-0.0045;
+   const emergency=net<=-0.012;
+   const timed=age>=300;
+   const expiry=secondsLeft<=35;
+   if(take||stop||emergency||timed||expiry){
+      const why=emergency?'EMERGENCY STOP':expiry?'NEAR EXPIRY':take?'TARGET':stop?'STOP':'5M TIME EXIT';
+      const pnl=position.stake*net;
+      trades.push({side:position.side,pnl,reason:why,entry:position.entry,exit:price,at:new Date().toISOString(),grade:position.grade,stake:position.stake,seconds:Math.round(age)});
+      saveLedger();$('lastExit').textContent='SELL '+position.side+' @ $'+price.toFixed(2)+' · '+why+' · $'+pnl.toFixed(2);
+      mark(last(ten).time,position.side==='UP'?'DOWN':'UP','SELL '+why+' $'+pnl.toFixed(2));
+      position=null;saveOpen();lastTradeExit=now;
+   }
  }
- if(!position&&!paused&&s.side!=='WAIT'&&['A','B'].includes(s.grade)&&now-lastDecision>60000){position={side:s.side,entry:price,at:now,stake:10,grade:s.grade,
- target:price*(s.side==='UP'?1.003:0.997),stop:price*(s.side==='UP'?0.996:1.004),why:s.reason};
- saveOpen();lastDecision=now;mark(last(ten).time,s.side,'BUY '+s.side+' '+s.grade+' $10')}
+ if(!position&&!paused&&entryAllowed){
+    // Spot-direction paper simulation. Do not mistake these for executable binary-market fills.
+    position={side:s.side,entry:price,at:now,stake:10,grade:s.grade,
+      target:price*(s.side==='UP'?1.0045:0.9955),stop:price*(s.side==='UP'?0.9945:1.0055),why:s.reason};
+    saveOpen();lastDecision=now;
+    mark(last(ten).time,s.side,'BUY '+s.side+' '+s.grade+' $10');
+ }
  $('plan').textContent=position?'ENTRY $'+position.entry.toFixed(2)+' · TARGET $'+position.target.toFixed(2)+' · STOP $'+position.stop.toFixed(2):'ENTRY — · TARGET — · STOP —';
- $('plan').title=position?'Paper plan: '+position.why+'; exits use simulated net P&L and time/flip rules. Targets are illustrative BTC levels.':'No open paper position';
- $('paper').textContent=paused?'PAPER PAUSED':position?'PAPER '+position.side+' $10 @ '+position.entry.toFixed(2):'PAPER: WAIT';const total=trades.reduce((a,x)=>a+x.pnl,0);$('performance').textContent='BTC-only simulated trades: '+trades.length+' · Net P&L $'+total.toFixed(2)+' (assumed 0.10% friction) · stored in this browser';
+ $('plan').title=position?'Indicative BTC spot levels; actual exits use simulated net P&L and 1–5m hold rules.':'No open paper position';
+ $('paper').textContent=paused?'PAPER PAUSED':position?'PAPER '+position.side+' '+position.grade+' $10 @ '+position.entry.toFixed(2):'PAPER: WAIT';
+ const total=trades.reduce((a,x)=>a+x.pnl,0);
+ $('performance').textContent='BTC-only paper trades: '+trades.length+' · Net P&L $'+total.toFixed(2)+' (assumed 0.10% friction)';
 }
 
 // Public market context is read-only. Never use spot BTC prices as binary-contract fills.
@@ -117,7 +162,7 @@ function onTrade(raw){const price=Number(raw.price),time=Date.parse(raw.time);if
  candle.update(current);if(ten.length>1){for(const [series,n] of [[ema9,9],[ema21,21],[ema34,34]]){const vals=ema(ten.map(x=>x.close),n);series.update({time:current.time,value:last(vals)})}}if(ten.length===1)chart.timeScale().fitContent();$('status').textContent='● LIVE';$('status').className='up';
 }
 function connect(){if(ws){try{ws.close()}catch(_){}}$('status').textContent='CONNECTING';ws=new WebSocket('wss://ws-feed.exchange.coinbase.com');ws.onopen=()=>{ws.send(JSON.stringify({type:'subscribe',product_ids:['BTC-USD'],channels:['matches']}))};ws.onmessage=e=>{try{const x=JSON.parse(e.data);if(x.type==='match'||x.type==='last_match')onTrade(x)}catch(err){$('error').textContent='Data parse issue: '+err.message}};ws.onerror=()=>{$('status').textContent='FEED ERROR';$('status').className='down'};ws.onclose=()=>{$('status').textContent='RECONNECTING';$('status').className='muted';setTimeout(connect,1800)}}
-$('reset').onclick=()=>{if(confirm('Erase browser-local paper trade history and open position?')){trades=[];position=null;saveOpen();saveLedger();$('performance').textContent='Paper trades: 0'}};
+$('reset').onclick=()=>{if(confirm('Erase browser-local paper trade history and open position?')){trades=[];position=null;lastEntryWindow=-1;try{localStorage.removeItem('btc15_v29_last_window')}catch(_){}saveOpen();saveLedger();$('performance').textContent='Paper trades: 0'}};
 $('pause').onclick=()=>{paused=!paused;$('pause').textContent=paused?'Resume paper':'Pause paper'};
 window.addEventListener('resize',()=>chart.applyOptions({width:innerWidth,height:Math.max(580,innerHeight-90)}));chart.applyOptions({height:Math.max(580,innerHeight-90)});
 setInterval(()=>{const now=Math.floor(Date.now()/1000),rem=900-now%900;$('clock').textContent='15M '+String(Math.floor(rem/60)).padStart(2,'0')+':'+String(rem%60).padStart(2,'0');$('feedage').textContent=lastSeen?'Last trade '+Math.round((Date.now()-lastSeen)/1000)+'s ago · 10s live':'Waiting for first trade';if(Date.now()-lastSeen>12000&&lastSeen){$('status').textContent='STALE / RECONNECTING';$('status').className='down';if(ws?.readyState===WebSocket.OPEN)connect()}},1000);
