@@ -1,6 +1,1 @@
-# BTC15 V21 — Trading markers and market context
-Preserves V20 chart styling and Coinbase live 10-second chart.
-Adds visible automatic paper BUY and SELL markers, reason, $10 illustrative stake, entry, target, stop, last exit and P&L. Browser-local open position persistence with a 15-minute max recovery window. BTC spot-direction simulation only; not a real order.
-Adds best-effort public Polymarket/Kalshi read-only indicative quotes in a small chip. These may be unavailable because of CORS, contract mapping, or API changes. They are NOT integrated into entry/exit eligibility and NOT real fill quotes. Polymarket outcome prices are indicative, not asks; Kalshi ask is displayed when available. Do not compare prices or outcomes without confirming strike, time window and settlement index.
-Stops use V20's existing simulated net-return/flip/time logic; the visible target/stop are illustrative BTC price levels, not exact contract prices. Chart style unchanged.
-No claims of guaranteed profitability, venue price parity, durable server-side execution, or proprietary Bucko replication.
+V22 fixes chart clipping/oversized 10-second candles when only a few live bars exist. Uses a stable initial 10s logical viewport instead of fitContent on one candle, sensible candle spacing, and chart sizing based on available browser height. Preserves V21 live data, signal grading, paper trades, and quote display. JavaScript syntax validated; browser deployment not tested. Upload only terminal.html to existing V21 app.
